@@ -1,8 +1,8 @@
 {
   "id": "travel-times",
   "name": "Travel Times",
-  "version": "1.0.0",
-  "description": "Door-to-door times by transit, Uber, Lyft and car for saved routes and upcoming calendar events, labeled by who each trip is for.",
+  "version": "1.1.0",
+  "description": "Door-to-door times by transit, car and rideshare for saved routes and upcoming calendar events, labeled by who each trip is for.",
   "author": "Ryan",
   "license": "MIT",
   "minAppVersion": "1.7.1",
@@ -16,15 +16,23 @@
         "person": "",
         "origin": "",
         "destination": "",
-        "days": ["mon", "tue", "wed", "thu", "fri"],
+        "days": [
+          "mon",
+          "tue",
+          "wed",
+          "thu",
+          "fri"
+        ],
         "activeFrom": "",
         "activeTo": ""
       }
     ],
     "showTransit": true,
-    "showUber": true,
+    "showUber": false,
     "showLyft": true,
     "showDrive": true,
+    "showRideshare": true,
+    "rideshareWait": 5,
     "transitOptions": 2,
     "uberProduct": "UberX",
     "lyftRideType": "lyft",
@@ -96,9 +104,27 @@
               "title": "Show on",
               "description": "None picked shows it every day.",
               "default": [],
-              "items": { "type": "string" },
-              "enum": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
-              "enumLabels": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+              "items": {
+                "type": "string"
+              },
+              "enum": [
+                "mon",
+                "tue",
+                "wed",
+                "thu",
+                "fri",
+                "sat",
+                "sun"
+              ],
+              "enumLabels": [
+                "Mon",
+                "Tue",
+                "Wed",
+                "Thu",
+                "Fri",
+                "Sat",
+                "Sun"
+              ],
               "ui:widget": "multiselect"
             },
             "activeFrom": {
@@ -132,12 +158,36 @@
         "ui:widget": "slider",
         "ui:step": 1,
         "ui:group": "Travel modes",
-        "ui:showWhen": { "field": "showTransit", "equals": true }
+        "ui:showWhen": {
+          "field": "showTransit",
+          "equals": true
+        }
+      },
+      "showRideshare": {
+        "type": "boolean",
+        "title": "Rideshare (estimated)",
+        "description": "Uber or Lyft door-to-door time worked out from the drive time plus a wait for the car. No price, and no account needed.",
+        "ui:widget": "toggle",
+        "ui:group": "Travel modes"
+      },
+      "rideshareWait": {
+        "type": "number",
+        "title": "Wait for a car (minutes)",
+        "description": "Added to the drive time. 5 is typical in a city.",
+        "minimum": 0,
+        "maximum": 30,
+        "ui:widget": "slider",
+        "ui:step": 1,
+        "ui:group": "Travel modes",
+        "ui:showWhen": {
+          "field": "showRideshare",
+          "equals": true
+        }
       },
       "showUber": {
         "type": "boolean",
-        "title": "Uber",
-        "description": "Needs the Uber connection in Plugin Store > Installed > Travel Times.",
+        "title": "Uber (live quotes)",
+        "description": "Real Uber prices and pickup times. Only works once Uber approves your developer app for ride estimates, which isn't self-serve; see the README. Use Rideshare above otherwise.",
         "ui:widget": "toggle",
         "ui:group": "Travel modes"
       },
@@ -147,7 +197,10 @@
         "description": "As Uber names it: UberX, Comfort, UberXL, Black...",
         "ui:widget": "text",
         "ui:group": "Travel modes",
-        "ui:showWhen": { "field": "showUber", "equals": true }
+        "ui:showWhen": {
+          "field": "showUber",
+          "equals": true
+        }
       },
       "showLyft": {
         "type": "boolean",
@@ -159,16 +212,29 @@
       "lyftRideType": {
         "type": "string",
         "title": "Lyft ride type",
-        "enum": ["lyft", "lyft_plus", "lyft_lux", "lyft_luxsuv"],
-        "enumLabels": ["Lyft", "Lyft XL", "Lux", "Lux Black XL"],
+        "enum": [
+          "lyft",
+          "lyft_plus",
+          "lyft_lux",
+          "lyft_luxsuv"
+        ],
+        "enumLabels": [
+          "Lyft",
+          "Lyft XL",
+          "Lux",
+          "Lux Black XL"
+        ],
         "ui:widget": "select",
         "ui:group": "Travel modes",
-        "ui:showWhen": { "field": "showLyft", "equals": true }
+        "ui:showWhen": {
+          "field": "showLyft",
+          "equals": true
+        }
       },
       "showDrive": {
         "type": "boolean",
         "title": "Drive",
-        "description": "Driving time in current traffic. Also stands in for Uber and Lyft trip length when they aren't connected.",
+        "description": "Driving time in current traffic.",
         "ui:widget": "toggle",
         "ui:group": "Travel modes"
       },
@@ -195,7 +261,10 @@
         "ui:widget": "slider",
         "ui:step": 1,
         "ui:group": "Calendar",
-        "ui:showWhen": { "field": "showCalendar", "equals": true }
+        "ui:showWhen": {
+          "field": "showCalendar",
+          "equals": true
+        }
       },
       "maxEvents": {
         "type": "number",
@@ -205,7 +274,10 @@
         "ui:widget": "slider",
         "ui:step": 1,
         "ui:group": "Calendar",
-        "ui:showWhen": { "field": "showCalendar", "equals": true }
+        "ui:showWhen": {
+          "field": "showCalendar",
+          "equals": true
+        }
       },
       "rideshareHours": {
         "type": "number",
@@ -216,7 +288,10 @@
         "ui:widget": "slider",
         "ui:step": 1,
         "ui:group": "Calendar",
-        "ui:showWhen": { "field": "showCalendar", "equals": true }
+        "ui:showWhen": {
+          "field": "showCalendar",
+          "equals": true
+        }
       },
       "bufferMinutes": {
         "type": "number",
@@ -227,7 +302,10 @@
         "ui:widget": "slider",
         "ui:step": 1,
         "ui:group": "Calendar",
-        "ui:showWhen": { "field": "showCalendar", "equals": true }
+        "ui:showWhen": {
+          "field": "showCalendar",
+          "equals": true
+        }
       },
       "eventFilter": {
         "type": "string",
@@ -235,7 +313,10 @@
         "description": "Comma-separated, e.g. \"Zoom, Teams, WFH\". Events with a link instead of an address are always skipped.",
         "ui:widget": "text",
         "ui:group": "Calendar",
-        "ui:showWhen": { "field": "showCalendar", "equals": true }
+        "ui:showWhen": {
+          "field": "showCalendar",
+          "equals": true
+        }
       },
       "showTitle": {
         "type": "boolean",
@@ -246,8 +327,16 @@
       "timeFormat": {
         "type": "string",
         "title": "Clock times",
-        "enum": ["auto", "12h", "24h"],
-        "enumLabels": ["Household setting", "12-hour", "24-hour"],
+        "enum": [
+          "auto",
+          "12h",
+          "24h"
+        ],
+        "enumLabels": [
+          "Household setting",
+          "12-hour",
+          "24-hour"
+        ],
         "ui:widget": "select",
         "ui:group": "Display"
       },
@@ -285,18 +374,18 @@
     },
     {
       "key": "uber_client_id",
-      "label": "Uber Client ID",
-      "description": "From your app at developer.uber.com (Ride Requests). Then press Connect below.",
+      "label": "Uber Client ID (optional)",
+      "description": "Only for an Uber app that Uber has approved for ride estimates. Leave blank otherwise.",
       "required": false
     },
     {
       "key": "uber_client_secret",
-      "label": "Uber Client Secret",
+      "label": "Uber Client Secret (optional)",
       "required": false
     },
     {
       "key": "lyft_basic_auth",
-      "label": "Lyft client credentials",
+      "label": "Lyft client credentials (optional)",
       "description": "Your Lyft client ID and secret joined as \"id:secret\" and base64-encoded. See the README for the one-line command.",
       "required": false
     }
@@ -306,12 +395,20 @@
     "flow": "authorization_code",
     "authorizationUrl": "https://auth.uber.com/oauth/v2/authorize",
     "tokenUrl": "https://auth.uber.com/oauth/v2/token",
-    "scopes": ["profile", "request"],
+    "scopes": [
+      "profile",
+      "request"
+    ],
     "pkce": false,
     "clientAuthentication": "body",
     "tokenPlacement": "header",
-    "tokenTargetDomains": ["api.uber.com"],
-    "secrets": { "clientId": "uber_client_id", "clientSecret": "uber_client_secret" }
+    "tokenTargetDomains": [
+      "api.uber.com"
+    ],
+    "secrets": {
+      "clientId": "uber_client_id",
+      "clientSecret": "uber_client_secret"
+    }
   },
   "allowedDomains": [
     "routes.googleapis.com",
@@ -321,7 +418,13 @@
   "exports": {
     "component": "default"
   },
-  "dataRequirements": ["calendar"],
+  "dataRequirements": [
+    "calendar"
+  ],
   "prefetchUrl": null,
-  "permissions": ["network", "secrets", "oauth"]
+  "permissions": [
+    "network",
+    "secrets",
+    "oauth"
+  ]
 }

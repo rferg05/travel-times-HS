@@ -24,6 +24,11 @@ export interface Config {
   showUber: boolean;
   showLyft: boolean;
   showDrive: boolean;
+  /** An estimated ride-hail tile from the drive time, for when Uber and
+   *  Lyft won't give quotes. */
+  showRideshare: boolean;
+  /** Minutes the Rideshare tile allows for a car to arrive. */
+  rideshareWait: number;
   transitOptions: number;
   uberProduct: string;
   lyftRideType: string;
@@ -82,9 +87,12 @@ export function readConfig(raw: Record<string, unknown>): Config {
   return {
     routes: Array.isArray(raw.routes) ? raw.routes.map(readRoute) : [],
     showTransit: on(raw.showTransit),
-    showUber: on(raw.showUber),
+    // Off unless turned on: Uber only answers apps it has approved.
+    showUber: raw.showUber === true || raw.showUber === 'true',
     showLyft: on(raw.showLyft),
     showDrive: on(raw.showDrive),
+    showRideshare: on(raw.showRideshare),
+    rideshareWait: Math.round(num(raw.rideshareWait, 5, 0, 30)),
     transitOptions: Math.round(num(raw.transitOptions, 2, 1, 3)),
     uberProduct: str(raw.uberProduct, 'UberX') || 'UberX',
     lyftRideType: str(raw.lyftRideType, 'lyft') || 'lyft',

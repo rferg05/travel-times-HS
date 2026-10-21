@@ -9,7 +9,7 @@ import { hostFetcher, loadTrip } from './providers';
 import type { Fetcher, Mode, Reason, RideQuote, TransitLine, TransitOption, TripTimes } from './providers';
 import { isQuiet } from './schedule';
 import type { CalendarEvent, Person } from './schedule';
-import { bestTransit, buildTrips, fastest, leaveTimes, rideMinutes } from './trips';
+import { bestTransit, buildTrips, fastest, leaveTimes, rideMinutes, rideshareMinutes } from './trips';
 import type { ModeName, Trip } from './trips';
 
 /** Countdowns and which routes are showing are re-read this often. */
@@ -147,11 +147,17 @@ const ICONS: Record<ModeName, ReactNode> = {
   drive: (
     <path d="M6.5 5h11l2.5 6.2V19h-2.5v-2h-11v2H4v-7.8L6.5 5Zm1.3 2-1.6 4h11.6l-1.6-4H7.8ZM7.5 13a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3Zm9 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3Z" />
   ),
+  // A car with a pickup pin over it.
+  rideshare: (
+    <path d="M12 1.5a3 3 0 0 1 3 3c0 2-3 4.5-3 4.5s-3-2.5-3-4.5a3 3 0 0 1 3-3Zm0 2a1 1 0 1 0 0 2 1 1 0 0 0 0-2ZM6.5 10h11l2.5 4.5V21h-2.5v-1.5h-11V21H4v-6.5L6.5 10Zm1.2 2-1.2 2.5h11L16.3 12H7.7Zm-.2 4a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Zm9 0a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Z" />
+  ),
   uber: null,
   lyft: null,
 };
 
-const MODE_LABEL: Record<ModeName, string> = { transit: 'Transit', uber: 'Uber', lyft: 'Lyft', drive: 'Drive' };
+const MODE_LABEL: Record<ModeName, string> = {
+  transit: 'Transit', rideshare: 'Rideshare', uber: 'Uber', lyft: 'Lyft', drive: 'Drive',
+};
 
 function ModeIcon({ mode }: { mode: ModeName }) {
   if (ICONS[mode]) {
@@ -310,6 +316,29 @@ function RideTile({ mode, trip, times, now, clock, highlight, leave }: TileCommo
   );
 }
 
+/** Uber or Lyft door to door, estimated: the wait for a car plus the drive. */
+function RideshareTile({ trip, times, now, clock, highlight, leave }: TileCommon & { leave?: number }) {
+  const m = times?.drive;
+  if (!m || !m.ok) return <Tile mode="rideshare" big={null} sub={failText(m)} />;
+  const minutes = rideshareMinutes(times, trip.request.rideshareWait)!;
+  const note = trip.kind === 'event' ? leaveNote(leave, now, clock) : null;
+  return (
+    <Tile
+      mode="rideshare"
+      big={minutesText(minutes)}
+      estimated
+      highlight={highlight}
+      tone={note?.tone}
+      sub={(
+        <>
+          <span>{trip.request.rideshareWait} min wait + drive</span>
+          {note && <span style={{ color: note.tone }}>{note.text}</span>}
+        </>
+      )}
+    />
+  );
+}
+
 function DriveTile({ trip, times, now, clock, highlight, leave }: TileCommon & { leave?: number }) {
   const m = times?.drive;
   if (!m || !m.ok) return <Tile mode="drive" big={null} sub={failText(m)} />;
@@ -334,7 +363,7 @@ function DriveTile({ trip, times, now, clock, highlight, leave }: TileCommon & {
 }
 
 function TripCard({ trip, times, config, now, clock }: Omit<TileCommon, 'highlight'>) {
-  const best = trip.kind === 'route' ? fastest(times, now) : null;
+  const best = trip.kind === 'route' ? fastest(times, now, trip.request) : null;
   const leave = trip.kind === 'event' ? leaveTimes(trip, times) : {};
   const common = { trip, times, config, now, clock };
   const edge = trip.people[0]?.color ?? (trip.kind === 'event' ? 'rgba(255,255,255,0.35)' : ACCENT);
@@ -357,6 +386,7 @@ function TripCard({ trip, times, config, now, clock }: Omit<TileCommon, 'highlig
       </div>
       <div style={{ display: 'flex', gap: '0.4em', flexWrap: 'wrap' }}>
         {r.transit && <TransitTile {...common} highlight={best === 'transit'} leave={leave.transit} />}
+        {r.rideshare && <RideshareTile {...common} highlight={best === 'rideshare'} leave={leave.rideshare} />}
         {r.uber && <RideTile {...common} mode="uber" highlight={best === 'uber'} leave={leave.uber} />}
         {r.lyft && <RideTile {...common} mode="lyft" highlight={best === 'lyft'} leave={leave.lyft} />}
         {r.drive && <DriveTile {...common} highlight={best === 'drive'} leave={leave.drive} />}

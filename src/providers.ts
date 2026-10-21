@@ -457,6 +457,10 @@ export interface TripRequest {
   drive: boolean;
   uber: boolean;
   lyft: boolean;
+  /** The estimated Rideshare tile: needs only the drive time. */
+  rideshare: boolean;
+  /** Minutes allowed for a rideshare car to arrive. Not part of any lookup. */
+  rideshareWait: number;
   uberProduct: string;
   lyftRideType: string;
 }
@@ -493,7 +497,7 @@ export async function loadTrip(fetch: Fetcher, req: TripRequest, now = Date.now(
   }
   // The drive lookup also places both ends for Uber and Lyft, which need
   // coordinates rather than addresses.
-  const wantsCar = req.drive || req.uber || req.lyft;
+  const wantsCar = req.drive || req.rideshare || req.uber || req.lyft;
   const drive = wantsCar ? await guard(() => loadDrive(fetch, req.origin, req.destination)) : undefined;
   // Kept even when the Drive tile is off: it stands in for a ride's length
   // when Uber or Lyft doesn't give one.

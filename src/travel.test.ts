@@ -4,10 +4,10 @@ import {
   loadTrip, parseDrive, parseLatLon, parseLyft, parseTransit, parseUberEstimates, parseUberRequestEstimate,
   resetLyftToken, resetUberPath,
 } from './providers';
-import type { Fetcher, ProxyRequest } from './providers';
+import type { Fetcher, ProxyRequest, TripRequest } from './providers';
 import { findPerson, inWindow, isActive, upcomingTrips } from './schedule';
 import type { Person } from './schedule';
-import { bestTransit, buildTrips, fastest, leaveTimes } from './trips';
+import { bestTransit, buildTrips, fastest, leaveTimes, rideshareMinutes } from './trips';
 
 const T0 = Date.parse('2026-10-21T13:00:00Z'); // Wed 08:00 in Chicago
 const TZ = 'America/Chicago';
@@ -173,7 +173,28 @@ describe('schedule', () => {
     expect(trips[0].request.origin).toBe('Home St');
     // Arrive five minutes early by default; rideshare only within 3 hours.
     expect(trips[1].arriveBy).toBe(T0 + 115 * 60_000);
-    expect(trips[1].request.uber).toBe(true);
+    expect(trips[1].request.uber).toBe(false);
+    expect(trips[1].request.rideshare).toBe(true);
+  });
+
+  it('defaults to the estimated rideshare tile, with live Uber off', () => {
+    const c = readConfig({});
+    expect([c.showRideshare, c.rideshareWait, c.showUber]).toEqual([true, 5, false]);
+    expect(readConfig({ showUber: true }).showUber).toBe(true);
+  });
+
+  it('looks up the drive for the rideshare tile even with Drive off', async () => {
+    const log: ProxyRequest[] = [];
+    const fetch: Fetcher = async (req) => {
+      log.push(req);
+      return { status: 200, body: { routes: [{ duration: '900s', staticDuration: '900s', legs: [{}] }] } };
+    };
+    const times = await loadTrip(fetch, {
+      origin: 'a', destination: 'b', arriveBy: null, transit: false, drive: false, uber: false, lyft: false,
+      rideshare: true, rideshareWait: 4, uberProduct: 'UberX', lyftRideType: 'lyft',
+    }, T0);
+    expect(log).toHaveLength(1);
+    expect(rideshareMinutes(times, 4)).toBe(19);
   });
 });
 
@@ -202,7 +223,7 @@ describe('a whole trip', () => {
     const log: ProxyRequest[] = [];
     const times = await loadTrip(mockFetcher(log), {
       origin: 'a', destination: 'b', arriveBy: null, transit: true, drive: true, uber: true, lyft: true,
-      uberProduct: 'UberX', lyftRideType: 'lyft',
+      rideshare: false, rideshareWait: 5, uberProduct: 'UberX', lyftRideType: 'lyft',
     }, T0);
     expect(times.transit?.ok).toBe(true);
     expect(times.drive).toEqual({ ok: true, value: expect.objectContaining({ minutes: 22, delayMinutes: 2 }) });
@@ -210,7 +231,10 @@ describe('a whole trip', () => {
     expect(times.lyft).toEqual({ ok: false, reason: 'notConnected' });
     expect(log.find((r) => r.url.includes('computeRoutes'))?.secretInjections?.header?.['X-Goog-Api-Key']).toBe('{{google_maps_key}}');
     // Leaving now: bus arrives 08:32, drive 08:22, Uber 08:25.
-    expect(fastest(times, T0)).toBe('drive');
+    const req = { transit: true, drive: true, uber: true, lyft: true, rideshare: false, rideshareWait: 5 } as TripRequest;
+    expect(fastest(times, T0, req)).toBe('drive');
+    // With the Drive tile off, Uber is the fastest one shown.
+    expect(fastest(times, T0, { ...req, drive: false })).toBe('uber');
   });
 });
 
@@ -224,7 +248,7 @@ describe('leave times for events', () => {
   });
 
   it('counts back from the arrive-by time', () => {
-    const trip = { arriveBy: T0 + 60 * 60_000 } as Parameters<typeof leaveTimes>[0];
+    const trip = { arriveBy: T0 + 60 * 60_000, request: { rideshareWait: 7 } } as Parameters<typeof leaveTimes>[0];
     const leave = leaveTimes(trip, {
       fetchedAt: T0,
       drive: { ok: true, value: { minutes: 20, delayMinutes: 0, start: null, end: null } },
@@ -233,6 +257,8 @@ describe('leave times for events', () => {
     expect(leave.drive).toBe(T0 + 40 * 60_000);
     // No ride length from Uber: the drive time stands in.
     expect(leave.uber).toBe(T0 + 35 * 60_000);
+    // Estimated rideshare: 7 minutes for the car, then the 20-minute drive.
+    expect(leave.rideshare).toBe(T0 + 33 * 60_000);
   });
 });
 

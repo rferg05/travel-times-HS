@@ -7,7 +7,7 @@ import type { DriveTime, Mode, RideQuote, TransitOption, TripRequest, TripTimes 
 import { eventPeople, findPerson, isActive, isComplete, upcomingTrips } from './schedule';
 import type { CalendarEvent, Person } from './schedule';
 
-export type ModeName = 'transit' | 'uber' | 'lyft' | 'drive';
+export type ModeName = 'transit' | 'rideshare' | 'uber' | 'lyft' | 'drive';
 
 export interface Trip {
   key: string;
@@ -26,8 +26,9 @@ export interface Trip {
 }
 
 export function tripKey(req: TripRequest): string {
-  return JSON.stringify([req.origin, req.destination, req.arriveBy, req.transit, req.drive, req.uber,
-    req.lyft, req.uberProduct, req.lyftRideType]);
+  // The rideshare wait is left out: changing it changes no lookup.
+  return JSON.stringify([req.origin, req.destination, req.arriveBy, req.transit, req.drive, req.rideshare,
+    req.uber, req.lyft, req.uberProduct, req.lyftRideType]);
 }
 
 /** The trips to show now: active saved routes first, then upcoming events. */
@@ -40,6 +41,8 @@ export function buildTrips(
   const modes = {
     transit: config.showTransit,
     drive: config.showDrive,
+    rideshare: config.showRideshare,
+    rideshareWait: config.rideshareWait,
     uberProduct: config.uberProduct,
     lyftRideType: config.lyftRideType,
   };
@@ -118,16 +121,23 @@ export function bestTransit(options: TransitOption[], arriveBy: number | null): 
   return inTime.reduce((a, b) => ((b.leaveAt ?? 0) > (a.leaveAt ?? 0) ? b : a));
 }
 
-/** When each mode gets there (epoch ms), leaving now, for the modes that answered. */
-export function arrivals(times: TripTimes | undefined, now: number): Partial<Record<ModeName, number>> {
+/** The estimated Rideshare tile: wait for the car, then drive. */
+export function rideshareMinutes(times: TripTimes | undefined, wait: number): number | null {
+  return times?.drive?.ok ? wait + times.drive.value.minutes : null;
+}
+
+/** When each shown mode gets there (epoch ms), leaving now, for the modes that answered. */
+export function arrivals(times: TripTimes | undefined, now: number, req: TripRequest): Partial<Record<ModeName, number>> {
   const out: Partial<Record<ModeName, number>> = {};
   if (!times) return out;
-  const t = times.transit?.ok ? times.transit.value[0] : null;
+  const t = req.transit && times.transit?.ok ? times.transit.value[0] : null;
   if (t?.arriveAt) out.transit = t.arriveAt;
-  if (times.drive?.ok) out.drive = now + times.drive.value.minutes * 60_000;
+  if (req.drive && times.drive?.ok) out.drive = now + times.drive.value.minutes * 60_000;
+  const share = req.rideshare ? rideshareMinutes(times, req.rideshareWait) : null;
+  if (share !== null) out.rideshare = now + share * 60_000;
   for (const m of ['uber', 'lyft'] as const) {
     const q = times[m];
-    if (q?.ok) {
+    if (req[m] && q?.ok) {
       const { minutes } = rideMinutes(q.value, times.drive);
       if (minutes !== null) out[m] = now + minutes * 60_000;
     }
@@ -136,8 +146,8 @@ export function arrivals(times: TripTimes | undefined, now: number): Partial<Rec
 }
 
 /** The mode that arrives first leaving now, if at least two answered. */
-export function fastest(times: TripTimes | undefined, now: number): ModeName | null {
-  const a = Object.entries(arrivals(times, now)) as [ModeName, number][];
+export function fastest(times: TripTimes | undefined, now: number, req: TripRequest): ModeName | null {
+  const a = Object.entries(arrivals(times, now, req)) as [ModeName, number][];
   if (a.length < 2) return null;
   return a.reduce((x, y) => (y[1] < x[1] ? y : x))[0];
 }
@@ -149,6 +159,8 @@ export function leaveTimes(trip: Trip, times: TripTimes | undefined): Partial<Re
   const t = times.transit?.ok ? bestTransit(times.transit.value, trip.arriveBy) : null;
   if (t?.leaveAt) out.transit = t.leaveAt;
   if (times.drive?.ok) out.drive = trip.arriveBy - times.drive.value.minutes * 60_000;
+  const share = rideshareMinutes(times, trip.request.rideshareWait);
+  if (share !== null) out.rideshare = trip.arriveBy - share * 60_000;
   for (const m of ['uber', 'lyft'] as const) {
     const q = times[m];
     if (q?.ok) {
