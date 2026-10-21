@@ -170,3 +170,57 @@ export function leaveTimes(trip: Trip, times: TripTimes | undefined): Partial<Re
   }
   return out;
 }
+
+// ── When to look a trip up ──────────────────────────────────────────────────
+
+/** Events closer than this to home wait until shortly before they start. */
+export const NEARBY_MILES = 50;
+/** A nearby event gets one look this long before it starts... */
+export const FIRST_LOOK_MS = 3 * 3_600_000;
+/** ...and the normal refresh cadence from this long before. */
+export const CLOSE_IN_MS = 90 * 60_000;
+/** The refresh loop wakes once a minute, so a trip counts as due up to half a
+ *  wake-up early. Without this, a 10-minute refresh lands every 11 minutes. */
+const DUE_TOLERANCE_MS = 30_000;
+
+/** A mode the service didn't answer this time, worth asking again soon. */
+export function hasFailure(t: TripTimes): boolean {
+  return [t.transit, t.drive, t.uber, t.lyft].some((m) => m && !m.ok && m.reason === 'unavailable');
+}
+
+/**
+ * Whether a trip should be looked up now.
+ *
+ * Routes, and events 50 miles or more from home, refresh every `refreshMs`.
+ * A nearby event (or one whose distance isn't known) isn't looked up until
+ * 3 hours before it starts, gets one look then, and refreshes every
+ * `refreshMs` from 90 minutes before. A failed look is retried after
+ * `retryMs` at any stage.
+ */
+export function isDue(
+  trip: Trip,
+  have: TripTimes | undefined,
+  now: number,
+  opts: { refreshMs: number; retryMs: number; milesFromHome?: number | null },
+): boolean {
+  const failed = !!have && hasFailure(have);
+  const olderThan = (ms: number) => !have || now - have.fetchedAt >= ms - DUE_TOLERANCE_MS;
+  const cadence = () => olderThan(failed ? Math.min(opts.retryMs, opts.refreshMs) : opts.refreshMs);
+
+  if (trip.kind === 'route' || trip.startsAt === null) return cadence();
+  if (typeof opts.milesFromHome === 'number' && opts.milesFromHome >= NEARBY_MILES) return cadence();
+
+  const untilStart = trip.startsAt - now;
+  if (untilStart > FIRST_LOOK_MS) return false;
+  if (untilStart > CLOSE_IN_MS) {
+    // One look on entering the 3-hour window; more only to retry a failure.
+    if (!have || have.fetchedAt < trip.startsAt - FIRST_LOOK_MS) return true;
+    return failed && olderThan(opts.retryMs);
+  }
+  return cadence();
+}
+
+/** Google requests one lookup of this trip costs. */
+export function googleCost(req: TripRequest): number {
+  return (req.transit ? 1 : 0) + (req.drive || req.rideshare || req.uber || req.lyft ? 1 : 0);
+}

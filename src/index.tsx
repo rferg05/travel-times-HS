@@ -6,10 +6,15 @@ import { useFitFontSize } from './fit';
 import { readConfig } from './config';
 import type { Config } from './config';
 import { hostFetcher, loadTrip } from './providers';
+import { geocode, milesBetween } from './geo';
+import { alertLevel, browserStore, cappedFetcher, currentUsage, remaining } from './usage';
 import type { Fetcher, Mode, Reason, RideQuote, TransitLine, TransitOption, TripTimes } from './providers';
 import { isQuiet } from './schedule';
 import type { CalendarEvent, Person } from './schedule';
-import { bestTransit, buildTrips, fastest, leaveTimes, rideMinutes, rideshareMinutes } from './trips';
+import {
+  bestTransit, buildTrips, fastest, FIRST_LOOK_MS, googleCost, isDue, leaveTimes, NEARBY_MILES, rideMinutes,
+  rideshareMinutes,
+} from './trips';
 import type { ModeName, Trip } from './trips';
 
 /** Countdowns and which routes are showing are re-read this often. */
@@ -31,12 +36,18 @@ const REASON_TEXT: Record<Reason, string> = {
   badKey: 'key refused',
   notFound: 'no route found',
   noService: 'none available',
+  capped: 'monthly limit',
   unavailable: 'no answer',
 };
 
 // ── Data ────────────────────────────────────────────────────────────────────
 
 const cacheKey = (key: string) => `travel-times:${key}`;
+/** Kept long enough to cover a nearby event's wait between its 3-hour look
+ *  and the 90-minute mark, so a screen rotating back in doesn't look again. */
+const CACHE_TTL_MS = 4 * 3_600_000;
+/** Addresses typed in the editor are looked up once they stop changing for this long. */
+const TYPING_SETTLE_MS = 2000;
 
 function readCache(key: string): TripTimes | undefined {
   try {
@@ -47,21 +58,66 @@ function readCache(key: string): TripTimes | undefined {
   }
 }
 
-function writeCache(key: string, value: TripTimes, ttlMs: number): void {
-  try { window.__HS_SDK__?.displayCache?.set(cacheKey(key), value, ttlMs); } catch { /* preview without host */ }
+function writeCache(key: string, value: TripTimes): void {
+  try { window.__HS_SDK__?.displayCache?.set(cacheKey(key), value, CACHE_TTL_MS); } catch { /* preview without host */ }
 }
 
-function hasFailure(t: TripTimes): boolean {
-  return [t.transit, t.drive, t.uber, t.lyft].some((m) => m && !m.ok && m.reason === 'unavailable');
+/** `value`, once it has stopped changing for `ms`. */
+function useSettled<T>(value: T, ms: number): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const id = setTimeout(() => setSettled(value), ms);
+    return () => clearTimeout(id);
+  }, [value, ms]);
+  return settled;
 }
 
 /**
- * Times for every trip, refreshed every `refreshMinutes` (sooner after a
- * failure), paused during quiet hours. Answers are kept in the host's display
- * cache, so a screen rotating back in shows them at once instead of asking
- * Google again.
+ * Straight-line miles from home to each event's location, keyed by location:
+ * a number, null when either end can't be placed, absent while unknown.
+ * Home is the household location from Settings when the host provides it,
+ * else the module's home address.
  */
-function useTripTimes(trips: Trip[], config: Config, timezone: string | undefined, fetcher: Fetcher) {
+function useEventDistances(trips: Trip[], fetcher: Fetcher, home: { address: string; lat?: number; lon?: number }) {
+  const [miles, setMiles] = useState<Record<string, number | null>>({});
+  const places = [...new Set(trips.filter((t) => t.kind === 'event').map((t) => t.destination))].sort().join('\n');
+  const homeKey = useSettled(`${home.lat ?? ''},${home.lon ?? ''}|${home.address}`, TYPING_SETTLE_MS);
+
+  useEffect(() => {
+    if (!places) return;
+    let cancelled = false;
+    (async () => {
+      const [ll, address] = homeKey.split('|');
+      const [lat, lon] = ll.split(',').map(Number);
+      const from = ll !== ',' && Number.isFinite(lat) && Number.isFinite(lon)
+        ? { lat, lon }
+        : address ? await geocode(fetcher, address).catch(() => null) : null;
+      for (const place of places.split('\n')) {
+        if (cancelled) return;
+        const to = from ? await geocode(fetcher, place).catch(() => null) : null;
+        if (cancelled) return;
+        setMiles((m) => ({ ...m, [place]: from && to ? milesBetween(from, to) : null }));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [places, homeKey, fetcher]);
+
+  return miles;
+}
+
+/**
+ * Times for every trip, each looked up when `isDue` says (see trips.ts),
+ * paused during quiet hours and once the month's Google cap is used up.
+ * Answers are kept in the host's display cache, so a screen rotating back in
+ * shows them at once instead of asking Google again.
+ */
+function useTripTimes(
+  trips: Trip[],
+  config: Config,
+  timezone: string | undefined,
+  fetcher: Fetcher,
+  miles: Record<string, number | null>,
+) {
   const [times, setTimes] = useState<Record<string, TripTimes>>(() => {
     const out: Record<string, TripTimes> = {};
     for (const t of trips) {
@@ -70,44 +126,76 @@ function useTripTimes(trips: Trip[], config: Config, timezone: string | undefine
     }
     return out;
   });
+  const [usage, setUsage] = useState(() => currentUsage(browserStore, new Date(), timezone));
   const [poll, setPoll] = useState(0);
+  // Updated as lookups land, ahead of React state.
   const timesRef = useRef(times);
-  timesRef.current = times;
+  const tripsRef = useRef(trips);
+  tripsRef.current = trips;
+  const milesRef = useRef(miles);
+  milesRef.current = miles;
   const keys = trips.map((t) => t.key).join('\n');
+  // While an address is being typed in the editor, every keystroke is a new
+  // trip; only the one it settles on is looked up.
+  const settledKeys = useSettled(keys, TYPING_SETTLE_MS);
   const refreshMs = config.refreshMinutes * 60_000;
+  const distancesKnown = Object.keys(miles).length;
 
   useEffect(() => {
     const id = setInterval(() => setPoll((n) => n + 1), 60_000);
     return () => clearInterval(id);
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const now = Date.now();
-      const quiet = isQuiet(config, new Date(now), timezone);
-      for (const trip of trips) {
-        if (cancelled) return;
-        const have = timesRef.current[trip.key] ?? readCache(trip.key);
-        const maxAge = have && hasFailure(have) ? Math.min(RETRY_MS, refreshMs) : refreshMs;
-        if (have && now - have.fetchedAt < maxAge) {
-          if (!timesRef.current[trip.key]) setTimes((s) => ({ ...s, [trip.key]: have }));
-          continue;
-        }
-        // Overnight, keep showing what we have; only a trip with nothing yet is looked up.
-        if (quiet && have) continue;
-        const fresh = await loadTrip(fetcher, trip.request);
-        if (cancelled) return;
-        writeCache(trip.key, fresh, refreshMs * 2);
-        setTimes((s) => ({ ...s, [trip.key]: fresh }));
-      }
-    })();
-    return () => { cancelled = true; };
-    // `trips` is captured through `keys`; the requests are part of the key.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keys, poll, refreshMs, config.quietFrom, config.quietTo, timezone, fetcher]);
+  // One pass over the trips at a time. A change while a pass is running (a
+  // distance arriving, the minute ticking over) asks for another pass rather
+  // than cancelling this one, so a lookup that already went out is never
+  // thrown away and asked for again.
+  const running = useRef(false);
+  const again = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => () => { mounted.current = false; }, []);
 
-  return times;
+  useEffect(() => {
+    if (settledKeys !== keys) return;
+    if (running.current) { again.current = true; return; }
+    running.current = true;
+    (async () => {
+      do {
+        again.current = false;
+        const quiet = isQuiet(config, new Date(), timezone);
+        setUsage(currentUsage(browserStore, new Date(), timezone));
+        for (const trip of tripsRef.current) {
+          if (!mounted.current) return;
+          const have = timesRef.current[trip.key] ?? readCache(trip.key);
+          if (have && !timesRef.current[trip.key]) {
+            timesRef.current = { ...timesRef.current, [trip.key]: have };
+            setTimes((s) => ({ ...s, [trip.key]: have }));
+          }
+          const due = isDue(trip, have, Date.now(), {
+            refreshMs, retryMs: RETRY_MS, milesFromHome: milesRef.current[trip.destination],
+          });
+          if (!due) continue;
+          // Overnight, keep showing what we have; only a trip with nothing yet is looked up.
+          if (quiet && have) continue;
+          // Whole trips only: half a lookup would replace good times with a gap.
+          if (remaining(browserStore, config, new Date(), timezone) < googleCost(trip.request)) continue;
+          const fresh = await loadTrip(fetcher, trip.request);
+          writeCache(trip.key, fresh);
+          // Straight into the ref too, so a second pass sees it before React re-renders.
+          timesRef.current = { ...timesRef.current, [trip.key]: fresh };
+          if (!mounted.current) return;
+          setTimes((s) => ({ ...s, [trip.key]: fresh }));
+          setUsage(currentUsage(browserStore, new Date(), timezone));
+        }
+      } while (again.current && mounted.current);
+    })().finally(() => { running.current = false; });
+    // Trips and distances are read through refs; `settledKeys` and
+    // `distancesKnown` say when they changed in a way that matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settledKeys, keys, poll, distancesKnown, refreshMs, config.quietFrom, config.quietTo,
+    config.monthlyCap, timezone, fetcher]);
+
+  return { times, usage };
 }
 
 // ── Formatting ──────────────────────────────────────────────────────────────
@@ -362,7 +450,10 @@ function DriveTile({ trip, times, now, clock, highlight, leave }: TileCommon & {
   );
 }
 
-function TripCard({ trip, times, config, now, clock }: Omit<TileCommon, 'highlight'>) {
+function TripCard({ trip, times, config, now, clock, waitUntil, capped }: Omit<TileCommon, 'highlight'> & {
+  waitUntil?: number;
+  capped?: boolean;
+}) {
   const best = trip.kind === 'route' ? fastest(times, now, trip.request) : null;
   const leave = trip.kind === 'event' ? leaveTimes(trip, times) : {};
   const common = { trip, times, config, now, clock };
@@ -384,6 +475,11 @@ function TripCard({ trip, times, config, now, clock }: Omit<TileCommon, 'highlig
         </div>
         <PersonTag people={trip.people} name={trip.personName} />
       </div>
+      {!times && (capped || waitUntil !== undefined) ? (
+        <div style={{ fontSize: '0.72em', opacity: 0.6 }}>
+          {capped ? 'Paused for the rest of the month' : `Travel times from ${clock(waitUntil!)}`}
+        </div>
+      ) : (
       <div style={{ display: 'flex', gap: '0.4em', flexWrap: 'wrap' }}>
         {r.transit && <TransitTile {...common} highlight={best === 'transit'} leave={leave.transit} />}
         {r.rideshare && <RideshareTile {...common} highlight={best === 'rideshare'} leave={leave.rideshare} />}
@@ -391,6 +487,7 @@ function TripCard({ trip, times, config, now, clock }: Omit<TileCommon, 'highlig
         {r.lyft && <RideTile {...common} mode="lyft" highlight={best === 'lyft'} leave={leave.lyft} />}
         {r.drive && <DriveTile {...common} highlight={best === 'drive'} leave={leave.drive} />}
       </div>
+      )}
     </div>
   );
 }
@@ -416,6 +513,15 @@ export default function TravelTimes(props: TravelTimesProps) {
   const { style, timezone } = props;
   const config = useMemo(() => readConfig(props.config ?? {}), [props.config]);
   const fetcher = useMemo(() => props.fetcher ?? hostFetcher(), [props.fetcher]);
+  // Google requests go through the monthly cap; the geocoder doesn't use Google.
+  const capRef = useRef(config);
+  capRef.current = config;
+  const timezoneRef = useRef(timezone);
+  timezoneRef.current = timezone;
+  const googleFetcher = useMemo(
+    () => cappedFetcher(fetcher, () => capRef.current, { timezone: () => timezoneRef.current }),
+    [fetcher],
+  );
 
   const [tick, setTick] = useState(() => props.nowMs ?? Date.now());
   useEffect(() => {
@@ -432,7 +538,22 @@ export default function TravelTimes(props: TravelTimesProps) {
     () => buildTrips(config, new Date(minute * 60_000), { timezone, events, people }),
     [config, minute, timezone, events, people],
   );
-  const times = useTripTimes(trips, config, timezone, fetcher);
+  const miles = useEventDistances(trips, fetcher, {
+    address: config.homeAddress, lat: props.latitude, lon: props.longitude,
+  });
+  const { times, usage } = useTripTimes(trips, config, timezone, googleFetcher, miles);
+  /** A nearby event shows when its times will appear instead of empty tiles. */
+  const waitUntil = (t: Trip): number | undefined => {
+    if (t.kind !== 'event' || t.startsAt === null) return undefined;
+    const d = miles[t.destination];
+    if (typeof d === 'number' && d >= NEARBY_MILES) return undefined;
+    const from = t.startsAt - FIRST_LOOK_MS;
+    return from > now ? from : undefined;
+  };
+  // Reached once no whole trip fits in what's left, not only at the exact number.
+  const cheapest = Math.max(1, Math.min(...trips.map((t) => googleCost(t.request)).filter((c) => c > 0), 2));
+  const capped = config.monthlyCap - usage.count < cheapest;
+  const nearCap = !capped && usage.count >= alertLevel(config);
   const clock = useMemo(() => clockFormatter(config, props.timeFormat, timezone), [config, props.timeFormat, timezone]);
 
   const routes = trips.filter((t) => t.kind === 'route');
@@ -457,6 +578,17 @@ export default function TravelTimes(props: TravelTimesProps) {
         </div>
       )}
 
+      {(capped || nearCap) && (
+        <div style={{
+          fontSize: '0.7em', padding: '0.3em 0.6em', borderRadius: '0.5em',
+          color: capped ? RED : AMBER, background: `color-mix(in srgb, ${capped ? RED : AMBER} 14%, transparent)`,
+        }}>
+          {capped
+            ? `Monthly limit of ${config.monthlyCap.toLocaleString()} Google lookups reached. Times resume next month.`
+            : `${usage.count.toLocaleString()} of ${config.monthlyCap.toLocaleString()} Google lookups used this month.`}
+        </div>
+      )}
+
       {needsSetup && (
         <div style={{ opacity: 0.7, fontSize: '0.85em' }}>
           Add a route, or a home address for calendar events, in this module&apos;s settings.
@@ -466,14 +598,18 @@ export default function TravelTimes(props: TravelTimesProps) {
       {routes.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45em' }}>
           {upcoming.length > 0 && <SectionLabel>Routes</SectionLabel>}
-          {routes.map((t) => <TripCard key={t.key} trip={t} times={times[t.key]} config={config} now={now} clock={clock} />)}
+          {routes.map((t) => (
+            <TripCard key={t.key} trip={t} times={times[t.key]} config={config} now={now} clock={clock} capped={capped} />
+          ))}
         </div>
       )}
 
       {upcoming.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45em' }}>
           <SectionLabel>Upcoming</SectionLabel>
-          {upcoming.map((t) => <TripCard key={t.key} trip={t} times={times[t.key]} config={config} now={now} clock={clock} />)}
+          {upcoming.map((t) => (
+            <TripCard key={t.key} trip={t} times={times[t.key]} config={config} now={now} clock={clock} waitUntil={waitUntil(t)} capped={capped} />
+          ))}
         </div>
       )}
 

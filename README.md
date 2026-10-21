@@ -88,14 +88,30 @@ This uses Lyft's read-only client-credentials token (cost and pickup-time estima
 | Uber/Lyft for events starting within | 3 h | Live quotes only; prices are only good for now. The Rideshare tile shows for every event. |
 | Arrive early by | 5 min | Built into every leave time. |
 | Skip events whose title contains | | e.g. `WFH, Zoom` |
-| Check times every | 10 min | |
+| Check times every | 11 min | Routes, far-away events, and nearby events from 90 minutes before. |
+| Google requests per month | 10,000 | Hard limit, counted per display. Lookups stop for the rest of the month once it's reached. |
+| Warn at | 80% | A notice on the module from 8,000 requests, and a warning in the Home Screens log. |
 | Pause lookups | 23:00–05:30 | Shows the last times overnight without asking for new ones. |
 
 ## API usage and cost
 
-Each check of one trip is **2 Google requests** (transit and drive), plus 2 to Uber and 2 to Lyft if those are on. The Rideshare tile reuses the drive lookup and costs nothing extra. Answers are kept between screen rotations, so showing the module on several screens doesn't add requests.
+**Per check:** one trip is **2 Google requests** (transit and drive), plus 2 to Uber and 2 to Lyft if those are on. The Rideshare tile reuses the drive lookup and costs nothing extra. Answers are kept between screen rotations, so showing the module on several screens of one display doesn't add requests. Addresses typed in the editor are looked up only after they stop changing for 2 seconds.
 
-With the defaults (10 minutes, paused 23:00–05:30) a trip that shows all day is about **210 Google requests a day, ~6,300 a month**. A weekday commute limited to 6:00–10:00 is closer to 1,000 a month. Traffic-aware driving and transit are billed under Google's Routes API (Compute Routes); check the [Routes API pricing page](https://developers.google.com/maps/billing-and-pricing/pricing) for the current free monthly allowance and set a budget alert. Time windows on routes and a longer check interval are the two ways to cut usage.
+**When:**
+- **Routes** refresh every 11 minutes while they're showing, paused 23:00–05:30. That's about 95 checks, **~190 Google requests a day** per route. A weekday route is about 4,200 a month, or about 950 if it's limited to 6:00–10:00.
+- **Events within 50 miles of home** aren't looked up until **3 hours before they start**. They get one look then, and refresh every 11 minutes from **90 minutes before**. That's about 10 checks, **~20 requests per event**. Until the first look the card shows "Travel times from 2:15p".
+- **Events 50 miles or more away** refresh like routes for as long as they're in the look-ahead, since a long trip needs its leave time early.
+
+Distance to an event is the straight line from home, which is the household location in Settings, or the module's home address if none is set. The event's address is placed with OpenStreetMap's free [Nominatim](https://nominatim.org/) geocoder, not Google, and each address is remembered for a month. An event whose address can't be placed is treated as nearby.
+
+**Monthly limit:** the module counts every Google request it sends and stops at **10,000 per calendar month**. When the next one would go over, it keeps showing the last times and says *Monthly limit reached* until the 1st. From **80% (8,000)** it shows the count on the module and writes a warning to the Home Screens log. Two weekday commutes plus an event a day is roughly 9,000 a month, about 300 a day on weekdays. At that pace, the last 2,000 requests after the warning last about a week, which is time to trim a route's hours before lookups stop.
+
+The count is kept in the display's browser storage, so it survives reboots. It's **per display**: a second display, or the editor open on a laptop, counts separately. For a limit that covers everything, also set one on Google's side:
+
+1. **Quota:** Google Cloud Console > APIs & Services > Routes API > **Quotas**, and set *Compute Routes requests per day* to **320**. That's 10,000 / 31, so a whole month can't pass 10,000.
+2. **Budget alert:** Billing > **Budgets & alerts** > Create budget for the project, with alerts at 50%, 80% and 100%. A budget only emails you; it doesn't stop requests. The quota does that.
+
+Routes API pricing and its monthly free allowance are on Google's [pricing page](https://developers.google.com/maps/billing-and-pricing/pricing).
 
 Requests go out one at a time, at most 50 a minute, under the host proxy's 60-a-minute limit.
 

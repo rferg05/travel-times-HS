@@ -42,6 +42,10 @@ export interface Config {
   showTitle: boolean;
   timeFormat: 'auto' | '12h' | '24h';
   refreshMinutes: number;
+  /** Google requests allowed per calendar month on this display. */
+  monthlyCap: number;
+  /** Warn on screen at this percent of the cap. */
+  alertPercent: number;
   quietFrom: string;
   quietTo: string;
 }
@@ -105,7 +109,9 @@ export function readConfig(raw: Record<string, unknown>): Config {
     eventFilter: str(raw.eventFilter).split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
     showTitle: on(raw.showTitle),
     timeFormat: pick(raw.timeFormat, ['auto', '12h', '24h'] as const, 'auto'),
-    refreshMinutes: num(raw.refreshMinutes, 10, 2, 30),
+    refreshMinutes: num(raw.refreshMinutes, 11, 2, 30),
+    monthlyCap: Math.round(num(raw.monthlyCap, 10_000, 100, 100_000)),
+    alertPercent: Math.round(num(raw.alertPercent, 80, 50, 95)),
     quietFrom: raw.quietFrom === undefined ? '23:00' : clockTime(raw.quietFrom),
     quietTo: raw.quietTo === undefined ? '05:30' : clockTime(raw.quietTo),
   };

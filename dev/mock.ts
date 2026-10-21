@@ -27,6 +27,12 @@ function transit(dest: string, arriveBy?: number) {
 export const mockFetcher: Fetcher = async (req) => {
   await new Promise((r) => setTimeout(r, 150));
   const body = req.payload ? JSON.parse(req.payload) : {};
+  if (req.url.includes('nominatim')) {
+    // Milwaukee is the far-away place; everything else is in Chicago.
+    const q = new URL(req.url).searchParams.get('q') ?? '';
+    const ll = /milwaukee, wi/i.test(q) ? { lat: '43.0389', lon: '-87.9065' } : { lat: '41.88', lon: '-87.63' };
+    return { status: 200, body: [ll] };
+  }
   if (req.url.includes('computeRoutes')) {
     const dest = String(body.destination?.address ?? '');
     if (body.travelMode === 'TRANSIT') {

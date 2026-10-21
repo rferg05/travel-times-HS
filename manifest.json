@@ -1,7 +1,7 @@
 {
   "id": "travel-times",
   "name": "Travel Times",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Door-to-door times by transit, car and rideshare for saved routes and upcoming calendar events, labeled by who each trip is for.",
   "author": "Ryan",
   "license": "MIT",
@@ -45,7 +45,9 @@
     "eventFilter": "",
     "showTitle": true,
     "timeFormat": "auto",
-    "refreshMinutes": 10,
+    "refreshMinutes": 11,
+    "monthlyCap": 10000,
+    "alertPercent": 80,
     "quietFrom": "23:00",
     "quietTo": "05:30"
   },
@@ -248,7 +250,7 @@
       "homeAddress": {
         "type": "string",
         "title": "Home address",
-        "description": "Where trips to events start from, and the start of any route left blank.",
+        "description": "Where trips to events start from, and the start of any route left blank. Event distance is measured from the household location in Settings, or from this address if none is set.",
         "ui:widget": "text",
         "ui:placeholder": "1500 N Milwaukee Ave, Chicago",
         "ui:group": "Calendar"
@@ -343,11 +345,31 @@
       "refreshMinutes": {
         "type": "number",
         "title": "Check times every (minutes)",
-        "description": "Each check is one Google Maps request per route and mode. See the README for what this costs.",
+        "description": "Each check of a route is 2 Google requests (transit and drive). Nearby calendar events are checked once 3 hours before they start, then on this schedule from 90 minutes before.",
         "minimum": 2,
         "maximum": 30,
         "ui:widget": "slider",
         "ui:step": 1,
+        "ui:group": "Data"
+      },
+      "monthlyCap": {
+        "type": "number",
+        "title": "Google requests per month (hard limit)",
+        "description": "Lookups stop for the rest of the calendar month once this many Google requests have been sent from this display. Counted per display.",
+        "minimum": 1000,
+        "maximum": 50000,
+        "ui:widget": "slider",
+        "ui:step": 500,
+        "ui:group": "Data"
+      },
+      "alertPercent": {
+        "type": "number",
+        "title": "Warn at (% of monthly limit)",
+        "description": "Shows a notice on the module, and writes a warning to the Home Screens log.",
+        "minimum": 50,
+        "maximum": 95,
+        "ui:widget": "slider",
+        "ui:step": 5,
         "ui:group": "Data"
       },
       "quietFrom": {
@@ -413,13 +435,15 @@
   "allowedDomains": [
     "routes.googleapis.com",
     "api.uber.com",
-    "api.lyft.com"
+    "api.lyft.com",
+    "nominatim.openstreetmap.org"
   ],
   "exports": {
     "component": "default"
   },
   "dataRequirements": [
-    "calendar"
+    "calendar",
+    "location"
   ],
   "prefetchUrl": null,
   "permissions": [

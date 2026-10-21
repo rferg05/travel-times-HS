@@ -34,6 +34,7 @@ export type Reason =
   | 'badKey' // the service turned the key down
   | 'notFound' // no route between these places, or an address it can't place
   | 'noService' // no rides of this type here right now
+  | 'capped' // this month's Google request limit is used up
   | 'unavailable'; // the service didn't answer properly; try again next time
 
 export type Mode<T> = { ok: true; value: T } | { ok: false; reason: Reason };
@@ -143,6 +144,7 @@ function legEnd(leg: Record<string, unknown> | undefined, key: 'startLocation' |
 /** Google's answer to a refused or unroutable request, sorted by who can fix it. */
 function googleFailure(a: ProxyAnswer): Reason {
   if (isMissingSecret(a)) return 'notConnected';
+  if (a.status === 429 && (a.body as { error?: string } | null)?.error === 'monthly_cap') return 'capped';
   const text = JSON.stringify(a.body ?? '');
   if (a.status === 401 || a.status === 403 || /API_KEY_INVALID|PERMISSION_DENIED/.test(text)) return 'badKey';
   if (a.status === 400 || a.status === 404) return 'notFound';
