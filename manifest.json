@@ -1,0 +1,327 @@
+{
+  "id": "travel-times",
+  "name": "Travel Times",
+  "version": "1.0.0",
+  "description": "Door-to-door times by transit, Uber, Lyft and car for saved routes and upcoming calendar events, labeled by who each trip is for.",
+  "author": "Ryan",
+  "license": "MIT",
+  "minAppVersion": "1.7.1",
+  "moduleType": "travel-times",
+  "category": "Travel",
+  "icon": "Route",
+  "defaultConfig": {
+    "routes": [
+      {
+        "label": "Work",
+        "person": "",
+        "origin": "",
+        "destination": "",
+        "days": ["mon", "tue", "wed", "thu", "fri"],
+        "activeFrom": "",
+        "activeTo": ""
+      }
+    ],
+    "showTransit": true,
+    "showUber": true,
+    "showLyft": true,
+    "showDrive": true,
+    "transitOptions": 2,
+    "uberProduct": "UberX",
+    "lyftRideType": "lyft",
+    "showCalendar": true,
+    "homeAddress": "",
+    "calendarHours": 12,
+    "maxEvents": 3,
+    "rideshareHours": 3,
+    "bufferMinutes": 5,
+    "eventFilter": "",
+    "showTitle": true,
+    "timeFormat": "auto",
+    "refreshMinutes": 10,
+    "quietFrom": "23:00",
+    "quietTo": "05:30"
+  },
+  "defaultSize": {
+    "w": 640,
+    "h": 520
+  },
+  "defaultStyle": {
+    "fontSize": 16,
+    "padding": 14,
+    "backgroundColor": "rgba(0, 0, 0, 0.45)"
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "routes": {
+        "type": "array",
+        "title": "Saved routes",
+        "description": "Common trips like Work or School. Each one is shown with a time for every travel mode turned on below.",
+        "ui:group": "Routes",
+        "items": {
+          "type": "object",
+          "properties": {
+            "label": {
+              "type": "string",
+              "title": "Name",
+              "default": "",
+              "ui:widget": "text",
+              "ui:placeholder": "Work"
+            },
+            "person": {
+              "type": "string",
+              "title": "Who it's for",
+              "description": "A family member's name, as entered in Settings > Family. Their color and name tag the route. Leave blank for everyone.",
+              "default": "",
+              "ui:widget": "text",
+              "ui:placeholder": "Ryan"
+            },
+            "origin": {
+              "type": "string",
+              "title": "From",
+              "description": "An address, place name, or \"lat,lon\". Blank uses the home address under Calendar.",
+              "default": "",
+              "ui:widget": "text",
+              "ui:placeholder": "1500 N Milwaukee Ave, Chicago"
+            },
+            "destination": {
+              "type": "string",
+              "title": "To",
+              "default": "",
+              "ui:widget": "text",
+              "ui:placeholder": "233 S Wacker Dr, Chicago"
+            },
+            "days": {
+              "type": "array",
+              "title": "Show on",
+              "description": "None picked shows it every day.",
+              "default": [],
+              "items": { "type": "string" },
+              "enum": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+              "enumLabels": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+              "ui:widget": "multiselect"
+            },
+            "activeFrom": {
+              "type": "string",
+              "title": "Show from",
+              "description": "Optional. With Show until, limits the route to part of the day, e.g. 06:00 to 10:00 for a morning commute. Times are only looked up while the route is showing.",
+              "default": "",
+              "ui:widget": "time"
+            },
+            "activeTo": {
+              "type": "string",
+              "title": "Show until",
+              "default": "",
+              "ui:widget": "time"
+            }
+          }
+        }
+      },
+      "showTransit": {
+        "type": "boolean",
+        "title": "Public transit",
+        "description": "Trains and buses from Google Maps, including the walk to and from the stop.",
+        "ui:widget": "toggle",
+        "ui:group": "Travel modes"
+      },
+      "transitOptions": {
+        "type": "number",
+        "title": "Transit departures to list",
+        "minimum": 1,
+        "maximum": 3,
+        "ui:widget": "slider",
+        "ui:step": 1,
+        "ui:group": "Travel modes",
+        "ui:showWhen": { "field": "showTransit", "equals": true }
+      },
+      "showUber": {
+        "type": "boolean",
+        "title": "Uber",
+        "description": "Needs the Uber connection in Plugin Store > Installed > Travel Times.",
+        "ui:widget": "toggle",
+        "ui:group": "Travel modes"
+      },
+      "uberProduct": {
+        "type": "string",
+        "title": "Uber ride type",
+        "description": "As Uber names it: UberX, Comfort, UberXL, Black...",
+        "ui:widget": "text",
+        "ui:group": "Travel modes",
+        "ui:showWhen": { "field": "showUber", "equals": true }
+      },
+      "showLyft": {
+        "type": "boolean",
+        "title": "Lyft",
+        "description": "Needs the Lyft credentials in Plugin Store > Installed > Travel Times.",
+        "ui:widget": "toggle",
+        "ui:group": "Travel modes"
+      },
+      "lyftRideType": {
+        "type": "string",
+        "title": "Lyft ride type",
+        "enum": ["lyft", "lyft_plus", "lyft_lux", "lyft_luxsuv"],
+        "enumLabels": ["Lyft", "Lyft XL", "Lux", "Lux Black XL"],
+        "ui:widget": "select",
+        "ui:group": "Travel modes",
+        "ui:showWhen": { "field": "showLyft", "equals": true }
+      },
+      "showDrive": {
+        "type": "boolean",
+        "title": "Drive",
+        "description": "Driving time in current traffic. Also stands in for Uber and Lyft trip length when they aren't connected.",
+        "ui:widget": "toggle",
+        "ui:group": "Travel modes"
+      },
+      "showCalendar": {
+        "type": "boolean",
+        "title": "Upcoming events",
+        "description": "Travel times to the next calendar events that have a location.",
+        "ui:widget": "toggle",
+        "ui:group": "Calendar"
+      },
+      "homeAddress": {
+        "type": "string",
+        "title": "Home address",
+        "description": "Where trips to events start from, and the start of any route left blank.",
+        "ui:widget": "text",
+        "ui:placeholder": "1500 N Milwaukee Ave, Chicago",
+        "ui:group": "Calendar"
+      },
+      "calendarHours": {
+        "type": "number",
+        "title": "Look ahead (hours)",
+        "minimum": 1,
+        "maximum": 48,
+        "ui:widget": "slider",
+        "ui:step": 1,
+        "ui:group": "Calendar",
+        "ui:showWhen": { "field": "showCalendar", "equals": true }
+      },
+      "maxEvents": {
+        "type": "number",
+        "title": "Events to show",
+        "minimum": 1,
+        "maximum": 6,
+        "ui:widget": "slider",
+        "ui:step": 1,
+        "ui:group": "Calendar",
+        "ui:showWhen": { "field": "showCalendar", "equals": true }
+      },
+      "rideshareHours": {
+        "type": "number",
+        "title": "Uber/Lyft for events starting within (hours)",
+        "description": "Ride prices and pickup times are only good for now, so later events show transit and drive times only.",
+        "minimum": 0,
+        "maximum": 12,
+        "ui:widget": "slider",
+        "ui:step": 1,
+        "ui:group": "Calendar",
+        "ui:showWhen": { "field": "showCalendar", "equals": true }
+      },
+      "bufferMinutes": {
+        "type": "number",
+        "title": "Arrive early by (minutes)",
+        "description": "Added to the \"leave by\" time for events.",
+        "minimum": 0,
+        "maximum": 30,
+        "ui:widget": "slider",
+        "ui:step": 1,
+        "ui:group": "Calendar",
+        "ui:showWhen": { "field": "showCalendar", "equals": true }
+      },
+      "eventFilter": {
+        "type": "string",
+        "title": "Skip events whose title contains",
+        "description": "Comma-separated, e.g. \"Zoom, Teams, WFH\". Events with a link instead of an address are always skipped.",
+        "ui:widget": "text",
+        "ui:group": "Calendar",
+        "ui:showWhen": { "field": "showCalendar", "equals": true }
+      },
+      "showTitle": {
+        "type": "boolean",
+        "title": "Show title",
+        "ui:widget": "toggle",
+        "ui:group": "Display"
+      },
+      "timeFormat": {
+        "type": "string",
+        "title": "Clock times",
+        "enum": ["auto", "12h", "24h"],
+        "enumLabels": ["Household setting", "12-hour", "24-hour"],
+        "ui:widget": "select",
+        "ui:group": "Display"
+      },
+      "refreshMinutes": {
+        "type": "number",
+        "title": "Check times every (minutes)",
+        "description": "Each check is one Google Maps request per route and mode. See the README for what this costs.",
+        "minimum": 2,
+        "maximum": 30,
+        "ui:widget": "slider",
+        "ui:step": 1,
+        "ui:group": "Data"
+      },
+      "quietFrom": {
+        "type": "string",
+        "title": "Pause lookups from",
+        "description": "No requests between these times, to save API calls overnight. Clear both to never pause.",
+        "ui:widget": "time",
+        "ui:group": "Data"
+      },
+      "quietTo": {
+        "type": "string",
+        "title": "Pause lookups until",
+        "ui:widget": "time",
+        "ui:group": "Data"
+      }
+    }
+  },
+  "secrets": [
+    {
+      "key": "google_maps_key",
+      "label": "Google Maps API key",
+      "description": "Google Cloud key with the Routes API enabled. The same key the built-in Traffic module uses works here.",
+      "required": true
+    },
+    {
+      "key": "uber_client_id",
+      "label": "Uber Client ID",
+      "description": "From your app at developer.uber.com (Ride Requests). Then press Connect below.",
+      "required": false
+    },
+    {
+      "key": "uber_client_secret",
+      "label": "Uber Client Secret",
+      "required": false
+    },
+    {
+      "key": "lyft_basic_auth",
+      "label": "Lyft client credentials",
+      "description": "Your Lyft client ID and secret joined as \"id:secret\" and base64-encoded. See the README for the one-line command.",
+      "required": false
+    }
+  ],
+  "auth": {
+    "type": "oauth2",
+    "flow": "authorization_code",
+    "authorizationUrl": "https://auth.uber.com/oauth/v2/authorize",
+    "tokenUrl": "https://auth.uber.com/oauth/v2/token",
+    "scopes": ["profile", "request"],
+    "pkce": false,
+    "clientAuthentication": "body",
+    "tokenPlacement": "header",
+    "tokenTargetDomains": ["api.uber.com"],
+    "secrets": { "clientId": "uber_client_id", "clientSecret": "uber_client_secret" }
+  },
+  "allowedDomains": [
+    "routes.googleapis.com",
+    "api.uber.com",
+    "api.lyft.com"
+  ],
+  "exports": {
+    "component": "default"
+  },
+  "dataRequirements": ["calendar"],
+  "prefetchUrl": null,
+  "permissions": ["network", "secrets", "oauth"]
+}
