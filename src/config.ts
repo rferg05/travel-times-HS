@@ -51,7 +51,6 @@ export interface Config {
   maxEvents: number;
   bufferMinutes: number;
   eventFilter: string[];
-  showTitle: boolean;
   timeFormat: 'auto' | '12h' | '24h';
   refreshMinutes: number;
   /** Google requests allowed per calendar month on this display. */
@@ -143,7 +142,6 @@ export function readConfig(raw: Record<string, unknown>): Config {
     maxEvents: Math.round(num(raw.maxEvents, 3, 1, 6)),
     bufferMinutes: Math.round(num(raw.bufferMinutes, 5, 0, 30)),
     eventFilter: str(raw.eventFilter).split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
-    showTitle: on(raw.showTitle),
     timeFormat: pick(raw.timeFormat, ['auto', '12h', '24h'] as const, 'auto'),
     refreshMinutes: num(raw.refreshMinutes, 11, 2, 30),
     monthlyCap: Math.round(num(raw.monthlyCap, 10_000, 100, 100_000)),

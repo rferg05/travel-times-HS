@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import type { PluginComponentProps } from './hs-plugin';
 import { hostFrameStyle } from './host-style';
@@ -348,30 +348,14 @@ function Avatar({ person, palette }: { person: Person; palette: Palette }) {
   const Icon = 'icon' in content ? MEMBER_ICONS[content.icon] : null;
   return (
     <span aria-label={person.name} style={{
-      width: '1.8em', height: '1.8em', borderRadius: '50%', background: palette.base, flexShrink: 0,
+      width: '1.5em', height: '1.5em', borderRadius: '50%', background: palette.base, flexShrink: 0,
       display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
       color: palette.onBase, fontWeight: 800, fontSize: '1em', lineHeight: 1,
       boxShadow: `0 0 0 0.13em ${palette.ring}`,
     }}>
       {Icon
-        ? <Icon size="1.1em" color={palette.onBase} strokeWidth={2.4} aria-hidden />
-        : <span style={{ fontSize: '1.05em' }}>{'text' in content ? content.text : ''}</span>}
-    </span>
-  );
-}
-
-function PersonTag({ people }: { people: { name: string; palette: Palette }[] }) {
-  if (!people.length) return null;
-  return (
-    <span style={{ display: 'inline-flex', gap: '0.3em', flexShrink: 0 }}>
-      {people.map((p) => (
-        <span key={p.name} style={{
-          padding: '0.15em 0.65em', borderRadius: '1em', fontSize: '0.85em', fontWeight: 750,
-          background: p.palette.base, color: p.palette.onBase,
-        }}>
-          {firstName(p.name)}
-        </span>
-      ))}
+        ? <Icon size="0.95em" color={palette.onBase} strokeWidth={2.5} aria-hidden />
+        : <span style={{ fontSize: '0.9em' }}>{'text' in content ? content.text : ''}</span>}
     </span>
   );
 }
@@ -401,7 +385,7 @@ function Tile({ mode, agency, big, estimated, sub, highlight, badge = true, foot
   // growing tall; the details sit underneath. `data-fit="x"` has the
   // module's fit shrink the type if a tile's contents would spill sideways.
   return (
-    <div style={style}>
+    <div data-tile style={style}>
       {highlight && badge && (
         <span style={{
           position: 'absolute', top: '-0.6em', right: '0.5em', fontSize: '0.62em', fontWeight: 800, letterSpacing: '0.04em',
@@ -615,9 +599,12 @@ function TripCard({ trip, times, config, now, clock, pricing, waitUntil, capped,
   // The first rider's color drives the card; more riders add stripes and discs.
   const palettes = trip.people.map((p) => paletteFor(p.color));
   const palette = palettes[0] ?? NEUTRAL_PALETTE;
-  const tags = trip.people.length
-    ? trip.people.map((p, i) => ({ name: p.name, palette: palettes[i] }))
-    : trip.personName ? [{ name: trip.personName, palette: NEUTRAL_PALETTE }] : [];
+  // A route for someone who isn't in Settings > Family still gets a disc, in gray.
+  const discs: { key: string; person: Person; palette: Palette }[] = trip.people.length
+    ? trip.people.map((p, i) => ({ key: p.id, person: p, palette: palettes[i] }))
+    : trip.personName
+      ? [{ key: 'named', person: { id: '', name: trip.personName, color: '', sourceIds: [] }, palette: NEUTRAL_PALETTE }]
+      : [];
   const r = trip.request;
   const isEvent = trip.kind === 'event' && trip.arriveBy !== null;
 
@@ -661,24 +648,22 @@ function TripCard({ trip, times, config, now, clock, pricing, waitUntil, capped,
       background: palette.surface, border: `0.14em solid ${palette.rim}`,
     }}>
       <div style={{ width: '0.6em', flexShrink: 0, background: barFor(palettes) }} />
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '0.5em', padding: '0.6em 0.7em' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.55em', minWidth: 0 }}>
-          {trip.people.length > 0 && (
-            <span style={{ display: 'inline-flex' }}>
-              {trip.people.map((p, i) => (
-                <span key={p.id} style={{ marginLeft: i ? '-0.45em' : 0 }}><Avatar person={p} palette={palettes[i]} /></span>
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '0.4em', padding: '0.5em 0.6em' }}>
+        {/* One line: whose (disc), what, and where: "Work · 525 W Monroe". */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.45em', minWidth: 0 }}>
+          {discs.length > 0 && (
+            <span style={{ display: 'inline-flex', flexShrink: 0 }}>
+              {discs.map((d, i) => (
+                <span key={d.key} style={{ marginLeft: i ? '-0.4em' : 0 }}><Avatar person={d.person} palette={d.palette} /></span>
               ))}
             </span>
           )}
-          <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
-            <span style={{ fontWeight: 700, fontSize: '1.05em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {trip.title}
+          <span style={{ minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            <span style={{ fontWeight: 700 }}>{trip.title}</span>
+            <span style={{ opacity: 0.7, fontSize: '0.85em' }}>
+              {trip.startsAt !== null ? ` · ${clock(trip.startsAt)}` : ''} · {shortPlace(trip.destination)}
             </span>
-            <span style={{ fontSize: '0.8em', opacity: 0.75, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {trip.startsAt !== null ? `${clock(trip.startsAt)} · ` : 'to '}{shortPlace(trip.destination)}
-            </span>
-          </div>
-          <PersonTag people={tags} />
+          </span>
         </div>
         {!times && (capped || waitUntil !== undefined) ? (
           <div style={{ fontSize: '0.8em', opacity: 0.75 }}>
@@ -722,15 +707,17 @@ function TripCard({ trip, times, config, now, clock, pricing, waitUntil, capped,
 
 /** Width of one tile plus its gap, in em. */
 const TILE_W = 7.2;
+/** Width a tile needs beyond its widest line: padding, border, gap. */
+const TILE_EXTRA_W = 1.6;
 /** Height of one row of tiles plus its gap, in em. */
 const TILE_ROW_H = 5.6;
 /** A card's own width (color bar, padding) and height (header, padding), in em. */
 const CARD_W = 2.6;
-const CARD_H = 4.2;
+const CARD_H = 3.0;
 /** Space between cards, in em. */
 const GAP = 0.5;
 /** The title, footer, padding and section labels, in em. */
-const CHROME_H = 3.6;
+const CHROME_H = 2.0;
 const LABEL_H = 1.4;
 
 export interface Layout {
@@ -746,8 +733,10 @@ export interface Layout {
  * the number of cards across (0 picks it too).
  */
 export function planLayout(
-  width: number, height: number, cards: number, tiles: number, opts: { columns?: number; sections?: number } = {},
+  width: number, height: number, cards: number, tiles: number,
+  opts: { columns?: number; sections?: number; tileWidth?: number } = {},
 ): Layout {
+  const tileW = opts.tileWidth ?? TILE_W;
   const n = Math.max(1, cards);
   const t = Math.max(1, tiles);
   if (width <= 0 || height <= 0) return { columns: Math.min(opts.columns || 1, n), tilesPerRow: t };
@@ -759,7 +748,7 @@ export function planLayout(
     const cardRows = Math.ceil(n / c);
     for (let k = t; k >= 1; k--) {
       const tileRows = Math.ceil(t / k);
-      const emWide = c * (k * TILE_W + CARD_W) + (c - 1) * GAP;
+      const emWide = c * (k * tileW + CARD_W) + (c - 1) * GAP;
       const emTall = chrome + cardRows * (CARD_H + tileRows * TILE_ROW_H) + (cardRows - 1) * GAP;
       const em = Math.min(width / emWide, height / emTall);
       // Ties go to fewer cards across and more tiles per row.
@@ -782,7 +771,39 @@ function SectionLabel({ children }: { children: ReactNode }) {
 /** The module size the layout is authored at: its default size. */
 const REFERENCE_AREA = 640 * 520;
 /** With room to spare, type grows up to this much past its scaled size. */
-const MAX_GROW = 1.8;
+const MAX_GROW = 2.6;
+
+/**
+ * How wide the widest tile's contents are, in em of the module's text: the
+ * layout plan's tile width. Measured from what's on screen (a tile pricing
+ * "UberX $18-$23 (5 min)" needs more room than a guess would give it), so the
+ * plan doesn't pack more tiles in a row than fit and leave height unused.
+ * Ems don't change as the text scales, so this settles after one pass.
+ */
+function useTileWidth(boxRef: React.RefObject<HTMLDivElement | null>, deps: unknown[]): number {
+  const [em, setEm] = useState(TILE_W);
+  useLayoutEffect(() => {
+    // The module's own box (inside the measuring wrapper) carries the text size.
+    const root = (boxRef.current?.firstElementChild as HTMLElement | null) ?? boxRef.current;
+    if (!root) return;
+    const rootPx = parseFloat(getComputedStyle(root).fontSize);
+    if (!rootPx) return;
+    let widest = 0;
+    root.querySelectorAll<HTMLElement>('[data-tile] [data-fit]').forEach((row) => {
+      // The row's own content, not its box: a row with room to spare would
+      // otherwise read as wide as the tile it's in.
+      const left = row.getBoundingClientRect().left;
+      let right = left;
+      for (const child of Array.from(row.children)) right = Math.max(right, child.getBoundingClientRect().right);
+      widest = Math.max(widest, (right - left) / rootPx);
+    });
+    if (!widest) return;
+    const next = Math.max(TILE_W, widest + TILE_EXTRA_W);
+    if (Math.abs(next - em) > 0.25) setEm(next);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+  return em;
+}
 
 /** An element's size in px, kept current. */
 function useBoxSize(ref: React.RefObject<HTMLDivElement | null>): { w: number; h: number } {
@@ -907,10 +928,11 @@ export default function TravelTimes(props: TravelTimesProps) {
   const textSize = style.fontSize || 16;
   const measureRef = useRef<HTMLDivElement>(null);
   const box = useBoxSize(measureRef);
+  const tileWidth = useTileWidth(measureRef, [times, config, box.w, box.h, trips.length]);
   const sizeScale = config.scaleWithSize && box.w > 0 && box.h > 0
     ? Math.min(3, Math.max(0.75, Math.sqrt((box.w * box.h) / REFERENCE_AREA)))
     : 1;
-  const resetKey = `${trips.map((t) => t.key).join('|')}|${Object.keys(times).length}|${box.w}x${box.h}|${capped}|${nearCap}`
+  const resetKey = `${trips.map((t) => t.key).join('|')}|${updated > 0}|${tileWidth.toFixed(1)}|${Object.keys(times).length}|${box.w}x${box.h}|${capped}|${nearCap}`
     + `|${config.cardColumns}|${config.transitRoutes}|${config.transitOptions}|${config.uberEstimates}|${config.lyftEstimates}`
     + `|${config.uberTypes.join()}|${config.lyftTypes.join()}`;
   const { boxRef, fontSize } = useFitFontSize(textSize * sizeScale * MAX_GROW, resetKey);
@@ -920,6 +942,7 @@ export default function TravelTimes(props: TravelTimesProps) {
     + (t.request.rideshare && config.uberEstimates ? 1 : 0) + (t.request.rideshare && config.lyftEstimates ? 1 : 0)
     + (t.request.drive ? 1 : 0)));
   const layout = planLayout(box.w, box.h, trips.length, tilesPerCard, {
+    tileWidth,
     columns: config.cardColumns, sections: (routes.length > 0 ? 1 : 0) + (upcoming.length > 0 ? 1 : 0),
   });
   const grid: CSSProperties = {
@@ -937,17 +960,6 @@ export default function TravelTimes(props: TravelTimesProps) {
   return (
     <div ref={measureRef} style={{ width: '100%', height: '100%' }}>
       <div ref={boxRef} style={{ ...hostFrameStyle(style), fontSize, display: 'flex', flexDirection: 'column', gap: '0.6em' }}>
-        {config.showTitle && (
-          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexShrink: 0 }}>
-            <span style={{ fontWeight: 750, fontSize: '1.1em' }}>Travel times</span>
-            {updated > 0 && (
-              <span style={{ fontSize: '0.7em', opacity: 0.6 }}>
-                {quiet ? 'paused overnight · ' : ''}updated {clock(updated)}
-              </span>
-            )}
-          </div>
-        )}
-
         {(capped || nearCap) && (
           <div style={{
             fontSize: '0.75em', padding: '0.3em 0.6em', borderRadius: '0.5em', flexShrink: 0,
@@ -975,9 +987,12 @@ export default function TravelTimes(props: TravelTimesProps) {
           <div style={{ opacity: 0.65, fontSize: '0.85em', flexShrink: 0 }}>No trips right now.</div>
         )}
 
-        {showsEstimates && (
-          <div style={{ marginTop: 'auto', fontSize: '0.55em', opacity: 0.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flexShrink: 0 }}>
-            ~ estimated · prices: Ridewise rate cards{pricing.region ? ` (${pricing.region})` : ''} · rush pricing is a guess
+        {(updated > 0 || showsEstimates) && (
+          <div style={{ marginTop: 'auto', fontSize: '0.55em', opacity: 0.55, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flexShrink: 0 }}>
+            {[
+              updated > 0 ? `${quiet ? 'paused overnight · ' : ''}updated ${clock(updated)}` : '',
+              showsEstimates ? `~ estimated · prices: Ridewise rate cards${pricing.region ? ` (${pricing.region})` : ''} · rush pricing is a guess` : '',
+            ].filter(Boolean).join(' · ')}
           </div>
         )}
       </div>

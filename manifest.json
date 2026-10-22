@@ -1,7 +1,7 @@
 {
   "id": "travel-times",
   "name": "Travel Times",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "description": "Door-to-door times by CTA/transit, Uber, Lyft and car, with estimated ride prices, for saved routes and upcoming calendar events. Color-coded by family member.",
   "author": "Ryan",
   "license": "MIT",
@@ -50,7 +50,6 @@
     "maxEvents": 3,
     "bufferMinutes": 5,
     "eventFilter": "",
-    "showTitle": true,
     "cardColumns": "auto",
     "scaleWithSize": true,
     "timeFormat": "auto",
@@ -371,12 +370,6 @@
           "field": "showCalendar",
           "equals": true
         }
-      },
-      "showTitle": {
-        "type": "boolean",
-        "title": "Show title",
-        "ui:widget": "toggle",
-        "ui:group": "Display"
       },
       "cardColumns": {
         "type": "string",
