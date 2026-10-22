@@ -27,8 +27,15 @@ export interface Config {
   /** An estimated ride-hail tile from the drive time, for when Uber and
    *  Lyft won't give quotes. */
   showRideshare: boolean;
-  /** Minutes the Rideshare tile allows for a car to arrive. */
+  /** Minutes the Uber and Lyft estimates allow for a car to arrive. */
   rideshareWait: number;
+  /** Ridewise region to price in; '' picks the nearest to home. */
+  rateRegion: string;
+  /** Raise estimated prices at rush hour and on weekend late nights. */
+  rushSurge: boolean;
+  rushMultiplier: number;
+  /** Grow everything with the module's area, as the CTA module does. */
+  scaleWithSize: boolean;
   transitOptions: number;
   uberProduct: string;
   lyftRideType: string;
@@ -93,10 +100,15 @@ export function readConfig(raw: Record<string, unknown>): Config {
     showTransit: on(raw.showTransit),
     // Off unless turned on: Uber only answers apps it has approved.
     showUber: raw.showUber === true || raw.showUber === 'true',
-    showLyft: on(raw.showLyft),
+    // Off unless turned on: Lyft no longer gives new developers API access.
+    showLyft: raw.showLyft === true || raw.showLyft === 'true',
     showDrive: on(raw.showDrive),
     showRideshare: on(raw.showRideshare),
     rideshareWait: Math.round(num(raw.rideshareWait, 5, 0, 30)),
+    rateRegion: /^auto$/i.test(str(raw.rateRegion)) ? '' : str(raw.rateRegion),
+    rushSurge: on(raw.rushSurge),
+    rushMultiplier: num(raw.rushMultiplier, 1.25, 1, 2),
+    scaleWithSize: on(raw.scaleWithSize),
     transitOptions: Math.round(num(raw.transitOptions, 2, 1, 3)),
     uberProduct: str(raw.uberProduct, 'UberX') || 'UberX',
     lyftRideType: str(raw.lyftRideType, 'lyft') || 'lyft',

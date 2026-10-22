@@ -51,6 +51,7 @@ const config = {
 
 createRoot(document.getElementById('root')!).render(
   <div style={{ width: w, height: h }}>
-    <TravelTimes config={config} style={style} events={events} people={people} fetcher={mockFetcher} timezone="America/Chicago" />
+    <TravelTimes config={config} style={style} events={events} people={people} fetcher={mockFetcher} timezone="America/Chicago"
+      latitude={41.9087} longitude={-87.6776} />
   </div>,
 );

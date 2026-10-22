@@ -19,14 +19,23 @@ function transit(dest: string, arriveBy?: number) {
       { travelMode: 'WALK', staticDuration: '240s' },
     ] }],
   });
-  const blue = { nameShort: 'Blue', color: '#00a1de', textColor: '#ffffff', vehicle: { type: 'SUBWAY' } };
-  const bus = { nameShort: '56', color: '#565a5c', textColor: '#ffffff', vehicle: { type: 'BUS' } };
+  const cta = [{ name: 'Chicago Transit Authority' }];
+  const blue = { nameShort: 'Blue', color: '#00a1de', textColor: '#ffffff', vehicle: { type: 'SUBWAY' }, agencies: cta };
+  const bus = { nameShort: '56', color: '#565a5c', textColor: '#ffffff', vehicle: { type: 'BUS' }, agencies: cta };
   return { routes: [option(3, blue), option(9, bus, 2), option(11, blue)] };
 }
 
 export const mockFetcher: Fetcher = async (req) => {
   await new Promise((r) => setTimeout(r, 150));
   const body = req.payload ? JSON.parse(req.payload) : {};
+  if (req.url.includes('getridewise.com')) {
+    // Ridewise's CSV format, with its Chicago and default rows for these services.
+    return { status: 200, body: `region,provider,service_type,base_fare_usd,per_mile_usd,per_minute_usd,booking_fee_usd,minimum_fare_usd
+Chicago Metro,uber,uberx,1.7,1.35,0.28,2.3,6.75
+Chicago Metro,lyft,lyft,1.6,1.3,0.26,2.35,6.5
+US Default,uber,uberx,1.5,1.2,0.22,2.2,6.0
+US Default,lyft,lyft,1.4,1.15,0.2,2.25,5.75` };
+  }
   if (req.url.includes('nominatim')) {
     // Milwaukee is the far-away place; everything else is in Chicago.
     const q = new URL(req.url).searchParams.get('q') ?? '';
@@ -40,7 +49,7 @@ export const mockFetcher: Fetcher = async (req) => {
     }
     const clear = 16 + (dest.length % 11);
     return { status: 200, body: { routes: [{
-      duration: `${(clear + 6) * 60}s`, staticDuration: `${clear * 60}s`,
+      duration: `${(clear + 6) * 60}s`, staticDuration: `${clear * 60}s`, distanceMeters: Math.round((clear / 3.4) * 1609),
       legs: [{ startLocation: { latLng: { latitude: 41.9034, longitude: -87.6665 } }, endLocation: { latLng: { latitude: 41.8786, longitude: -87.6359 } } }],
     }] } };
   }

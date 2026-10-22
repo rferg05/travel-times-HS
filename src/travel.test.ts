@@ -179,7 +179,8 @@ describe('schedule', () => {
 
   it('defaults to the estimated rideshare tile, with live Uber off', () => {
     const c = readConfig({});
-    expect([c.showRideshare, c.rideshareWait, c.showUber]).toEqual([true, 5, false]);
+    expect([c.showRideshare, c.rideshareWait, c.showUber, c.showLyft]).toEqual([true, 5, false, false]);
+    expect([c.rushSurge, c.rushMultiplier, c.rateRegion, c.scaleWithSize]).toEqual([true, 1.25, '', true]);
     expect(readConfig({ showUber: true }).showUber).toBe(true);
   });
 
@@ -248,7 +249,7 @@ describe('leave times for events', () => {
   });
 
   it('counts back from the arrive-by time', () => {
-    const trip = { arriveBy: T0 + 60 * 60_000, request: { rideshareWait: 7 } } as Parameters<typeof leaveTimes>[0];
+    const trip = { arriveBy: T0 + 60 * 60_000, request: { uber: true, rideshare: true, rideshareWait: 7 } } as Parameters<typeof leaveTimes>[0];
     const leave = leaveTimes(trip, {
       fetchedAt: T0,
       drive: { ok: true, value: { minutes: 20, delayMinutes: 0, start: null, end: null } },
@@ -257,8 +258,8 @@ describe('leave times for events', () => {
     expect(leave.drive).toBe(T0 + 40 * 60_000);
     // No ride length from Uber: the drive time stands in.
     expect(leave.uber).toBe(T0 + 35 * 60_000);
-    // Estimated rideshare: 7 minutes for the car, then the 20-minute drive.
-    expect(leave.rideshare).toBe(T0 + 33 * 60_000);
+    // No live Lyft quote: the estimate is 7 minutes for the car, then the 20-minute drive.
+    expect(leave.lyft).toBe(T0 + 33 * 60_000);
   });
 });
 

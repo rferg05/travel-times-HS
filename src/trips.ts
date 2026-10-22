@@ -7,7 +7,8 @@ import type { DriveTime, Mode, RideQuote, TransitOption, TripRequest, TripTimes 
 import { eventPeople, findPerson, isActive, isComplete, upcomingTrips } from './schedule';
 import type { CalendarEvent, Person } from './schedule';
 
-export type ModeName = 'transit' | 'rideshare' | 'uber' | 'lyft' | 'drive';
+/** One tile each. Uber and Lyft show a live quote when there is one, else an estimate. */
+export type ModeName = 'transit' | 'uber' | 'lyft' | 'drive';
 
 export interface Trip {
   key: string;
@@ -121,9 +122,30 @@ export function bestTransit(options: TransitOption[], arriveBy: number | null): 
   return inTime.reduce((a, b) => ((b.leaveAt ?? 0) > (a.leaveAt ?? 0) ? b : a));
 }
 
-/** The estimated Rideshare tile: wait for the car, then drive. */
+/** The estimate's door-to-door time: wait for a car, then drive. */
 export function rideshareMinutes(times: TripTimes | undefined, wait: number): number | null {
   return times?.drive?.ok ? wait + times.drive.value.minutes : null;
+}
+
+export interface RideTime {
+  /** The live quote, when the service gave one. */
+  live: RideQuote | null;
+  minutes: number | null;
+  /** Any part of the time is a stand-in rather than the service's own number. */
+  estimated: boolean;
+}
+
+/**
+ * What an Uber or Lyft tile shows for time: the live quote when it's turned
+ * on and answered, else the estimate (wait plus drive) when estimates are on.
+ * Null when there's nothing to show.
+ */
+export function rideFor(mode: 'uber' | 'lyft', req: TripRequest, times: TripTimes | undefined): RideTime | null {
+  const q = req[mode] ? times?.[mode] : undefined;
+  if (q?.ok) return { live: q.value, ...rideMinutes(q.value, times?.drive) };
+  if (!req.rideshare) return null;
+  const minutes = rideshareMinutes(times, req.rideshareWait);
+  return minutes === null ? null : { live: null, minutes, estimated: true };
 }
 
 /** When each shown mode gets there (epoch ms), leaving now, for the modes that answered. */
@@ -133,19 +155,15 @@ export function arrivals(times: TripTimes | undefined, now: number, req: TripReq
   const t = req.transit && times.transit?.ok ? times.transit.value[0] : null;
   if (t?.arriveAt) out.transit = t.arriveAt;
   if (req.drive && times.drive?.ok) out.drive = now + times.drive.value.minutes * 60_000;
-  const share = req.rideshare ? rideshareMinutes(times, req.rideshareWait) : null;
-  if (share !== null) out.rideshare = now + share * 60_000;
   for (const m of ['uber', 'lyft'] as const) {
-    const q = times[m];
-    if (req[m] && q?.ok) {
-      const { minutes } = rideMinutes(q.value, times.drive);
-      if (minutes !== null) out[m] = now + minutes * 60_000;
-    }
+    const r = rideFor(m, req, times);
+    if (r?.minutes != null) out[m] = now + r.minutes * 60_000;
   }
   return out;
 }
 
-/** The mode that arrives first leaving now, if at least two answered. */
+/** The mode that arrives first leaving now, if at least two answered.
+ *  Uber and Lyft estimates tie with each other, so a tie goes to the first. */
 export function fastest(times: TripTimes | undefined, now: number, req: TripRequest): ModeName | null {
   const a = Object.entries(arrivals(times, now, req)) as [ModeName, number][];
   if (a.length < 2) return null;
@@ -159,14 +177,9 @@ export function leaveTimes(trip: Trip, times: TripTimes | undefined): Partial<Re
   const t = times.transit?.ok ? bestTransit(times.transit.value, trip.arriveBy) : null;
   if (t?.leaveAt) out.transit = t.leaveAt;
   if (times.drive?.ok) out.drive = trip.arriveBy - times.drive.value.minutes * 60_000;
-  const share = rideshareMinutes(times, trip.request.rideshareWait);
-  if (share !== null) out.rideshare = trip.arriveBy - share * 60_000;
   for (const m of ['uber', 'lyft'] as const) {
-    const q = times[m];
-    if (q?.ok) {
-      const { minutes } = rideMinutes(q.value, times.drive);
-      if (minutes !== null) out[m] = trip.arriveBy - minutes * 60_000;
-    }
+    const r = rideFor(m, trip.request, times);
+    if (r?.minutes != null) out[m] = trip.arriveBy - r.minutes * 60_000;
   }
   return out;
 }

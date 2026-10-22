@@ -1,8 +1,8 @@
 {
   "id": "travel-times",
   "name": "Travel Times",
-  "version": "1.2.0",
-  "description": "Door-to-door times by transit, car and rideshare for saved routes and upcoming calendar events, labeled by who each trip is for.",
+  "version": "1.3.0",
+  "description": "Door-to-door times by CTA/transit, Uber, Lyft and car, with estimated ride prices, for saved routes and upcoming calendar events. Color-coded by who each trip is for.",
   "author": "Ryan",
   "license": "MIT",
   "minAppVersion": "1.7.1",
@@ -29,10 +29,13 @@
     ],
     "showTransit": true,
     "showUber": false,
-    "showLyft": true,
+    "showLyft": false,
     "showDrive": true,
     "showRideshare": true,
     "rideshareWait": 5,
+    "rateRegion": "",
+    "rushSurge": true,
+    "rushMultiplier": 1.25,
     "transitOptions": 2,
     "uberProduct": "UberX",
     "lyftRideType": "lyft",
@@ -44,6 +47,7 @@
     "bufferMinutes": 5,
     "eventFilter": "",
     "showTitle": true,
+    "scaleWithSize": true,
     "timeFormat": "auto",
     "refreshMinutes": 11,
     "monthlyCap": 10000,
@@ -52,8 +56,8 @@
     "quietTo": "05:30"
   },
   "defaultSize": {
-    "w": 640,
-    "h": 520
+    "w": 960,
+    "h": 720
   },
   "defaultStyle": {
     "fontSize": 16,
@@ -167,15 +171,15 @@
       },
       "showRideshare": {
         "type": "boolean",
-        "title": "Rideshare (estimated)",
-        "description": "Uber or Lyft door-to-door time worked out from the drive time plus a wait for the car. No price, and no account needed.",
+        "title": "Uber and Lyft estimates",
+        "description": "Estimated door-to-door time (a wait for the car plus the drive) and price, from Ridewise's published rate cards. No Uber or Lyft account needed.",
         "ui:widget": "toggle",
         "ui:group": "Travel modes"
       },
       "rideshareWait": {
         "type": "number",
         "title": "Wait for a car (minutes)",
-        "description": "Added to the drive time. 5 is typical in a city.",
+        "description": "Added to the drive time for the Uber and Lyft estimates. 5 is typical in a city.",
         "minimum": 0,
         "maximum": 30,
         "ui:widget": "slider",
@@ -186,10 +190,46 @@
           "equals": true
         }
       },
+      "rateRegion": {
+        "type": "string",
+        "title": "Price region",
+        "description": "A Ridewise region name such as \"Chicago Metro\" or \"NYC Metro\". Blank picks the nearest to home, or US Default.",
+        "ui:widget": "text",
+        "ui:placeholder": "Nearest to home",
+        "ui:group": "Travel modes",
+        "ui:showWhen": {
+          "field": "showRideshare",
+          "equals": true
+        }
+      },
+      "rushSurge": {
+        "type": "boolean",
+        "title": "Rush-hour pricing",
+        "description": "Raise estimated prices on weekdays 7:00-9:30 and 16:00-19:00 (half as much for the half hour either side) and Friday/Saturday 22:00-03:00. A rough guess, not live surge.",
+        "ui:widget": "toggle",
+        "ui:group": "Travel modes",
+        "ui:showWhen": {
+          "field": "showRideshare",
+          "equals": true
+        }
+      },
+      "rushMultiplier": {
+        "type": "number",
+        "title": "Rush-hour multiplier",
+        "minimum": 1,
+        "maximum": 2,
+        "ui:widget": "slider",
+        "ui:step": 0.05,
+        "ui:group": "Travel modes",
+        "ui:showWhen": {
+          "field": "rushSurge",
+          "equals": true
+        }
+      },
       "showUber": {
         "type": "boolean",
         "title": "Uber (live quotes)",
-        "description": "Real Uber prices and pickup times. Only works once Uber approves your developer app for ride estimates, which isn't self-serve; see the README. Use Rideshare above otherwise.",
+        "description": "Real Uber quotes in place of the estimate. Only works once Uber approves your developer app for ride estimates; see the README.",
         "ui:widget": "toggle",
         "ui:group": "Travel modes"
       },
@@ -206,8 +246,8 @@
       },
       "showLyft": {
         "type": "boolean",
-        "title": "Lyft",
-        "description": "Needs the Lyft credentials in Plugin Store > Installed > Travel Times.",
+        "title": "Lyft (live quotes)",
+        "description": "Real Lyft quotes in place of the estimate. Needs Lyft API credentials; see the README.",
         "ui:widget": "toggle",
         "ui:group": "Travel modes"
       },
@@ -326,6 +366,13 @@
         "ui:widget": "toggle",
         "ui:group": "Display"
       },
+      "scaleWithSize": {
+        "type": "boolean",
+        "title": "Scale with module size",
+        "description": "Grow text, logos and numbers with the module, so a large module stays readable from across the room. Text size still applies on top. Off sizes everything from Text size alone.",
+        "ui:widget": "toggle",
+        "ui:group": "Display"
+      },
       "timeFormat": {
         "type": "string",
         "title": "Clock times",
@@ -436,7 +483,8 @@
     "routes.googleapis.com",
     "api.uber.com",
     "api.lyft.com",
-    "nominatim.openstreetmap.org"
+    "nominatim.openstreetmap.org",
+    "getridewise.com"
   ],
   "exports": {
     "component": "default"

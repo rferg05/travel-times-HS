@@ -111,6 +111,8 @@ export interface TransitLine {
   textColor?: string;
   /** Google's vehicle type: SUBWAY, BUS, HEAVY_RAIL, TRAM, ... */
   vehicle: string;
+  /** The operating agency as Google names it ("Chicago Transit Authority"). */
+  agency?: string;
 }
 
 export interface TransitOption {
@@ -130,6 +132,8 @@ export interface DriveTime {
   minutes: number;
   /** Extra minutes from current traffic over a clear road. */
   delayMinutes: number;
+  /** Road distance, for fare estimates. */
+  miles?: number;
   start: LatLon | null;
   end: LatLon | null;
 }
@@ -180,7 +184,9 @@ export function parseTransit(body: unknown, now: number): TransitOption[] {
         const line = td.transitLine as Record<string, unknown> | undefined;
         const vehicle = String((line?.vehicle as { type?: string } | undefined)?.type ?? 'BUS');
         const name = String(line?.nameShort ?? line?.name ?? '').trim();
+        const agency = (line?.agencies as { name?: string }[] | undefined)?.[0]?.name;
         lines.push({
+          agency: typeof agency === 'string' && agency ? agency : undefined,
           name: name || vehicle.toLowerCase(),
           color: typeof line?.color === 'string' ? line.color : undefined,
           textColor: typeof line?.textColor === 'string' ? line.textColor : undefined,
@@ -212,9 +218,11 @@ export function parseDrive(body: unknown): DriveTime | null {
   const traffic = seconds(r.duration);
   const clear = seconds(r.staticDuration) || traffic;
   const leg = (r.legs as Record<string, unknown>[] | undefined)?.[0];
+  const meters = Number(r.distanceMeters);
   return {
     minutes: Math.round(traffic / 60),
     delayMinutes: Math.max(0, Math.round(traffic / 60) - Math.round(clear / 60)),
+    ...(Number.isFinite(meters) && meters > 0 ? { miles: meters / 1609.344 } : {}),
     start: legEnd(leg, 'startLocation'),
     end: legEnd(leg, 'endLocation'),
   };
@@ -253,7 +261,7 @@ export async function loadDrive(fetch: Fetcher, origin: string, destination: str
     destination: waypoint(destination),
     travelMode: 'DRIVE',
     routingPreference: 'TRAFFIC_AWARE',
-  }, 'routes.duration,routes.staticDuration,routes.legs.startLocation,routes.legs.endLocation'));
+  }, 'routes.duration,routes.staticDuration,routes.distanceMeters,routes.legs.startLocation,routes.legs.endLocation'));
   if (a.status !== 200) return fail(googleFailure(a));
   const drive = parseDrive(a.body);
   return drive ? { ok: true, value: drive } : fail('notFound');
