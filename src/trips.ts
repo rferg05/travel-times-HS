@@ -3,11 +3,11 @@
 // way gets there first.
 
 import type { Config } from './config';
-import type { DriveTime, Mode, RideQuote, TransitOption, TripRequest, TripTimes } from './providers';
+import type { TransitOption, TripRequest, TripTimes } from './providers';
 import { eventPeople, findPerson, isActive, isComplete, upcomingTrips } from './schedule';
 import type { CalendarEvent, Person } from './schedule';
 
-/** One tile each. Uber and Lyft show a live quote when there is one, else an estimate. */
+/** One tile each. Uber and Lyft are estimates from the drive lookup. */
 export type ModeName = 'transit' | 'uber' | 'lyft' | 'drive';
 
 export interface Trip {
@@ -28,36 +28,36 @@ export interface Trip {
 
 export function tripKey(req: TripRequest): string {
   // The rideshare wait is left out: changing it changes no lookup.
-  return JSON.stringify([req.origin, req.destination, req.arriveBy, req.transit, req.drive, req.rideshare,
-    req.uber, req.lyft, req.uberProduct, req.lyftRideType]);
+  return JSON.stringify([req.origin, req.destination, req.arriveBy, req.transit, req.drive, req.rideshare]);
 }
 
-/** The trips to show now: active saved routes first, then upcoming events. */
+/** The trips to show now: active saved routes first, then upcoming events.
+ *  `home` is where routes without a start, and trips to events, begin: the
+ *  home address, or the household location as "lat,lon" when that's blank. */
 export function buildTrips(
   config: Config,
   now: Date,
-  opts: { timezone?: string; events?: CalendarEvent[]; people?: Person[] } = {},
+  opts: { timezone?: string; events?: CalendarEvent[]; people?: Person[]; home?: string } = {},
 ): Trip[] {
   const people = opts.people ?? [];
+  const home = opts.home ?? config.homeAddress;
   const modes = {
     transit: config.showTransit,
     drive: config.showDrive,
     rideshare: config.showRideshare,
     rideshareWait: config.rideshareWait,
-    uberProduct: config.uberProduct,
-    lyftRideType: config.lyftRideType,
   };
   const trips: Trip[] = [];
 
   for (const route of config.routes) {
-    if (!isComplete(route, config.homeAddress) || !isActive(route, now, opts.timezone)) continue;
+    if (!isComplete(route, home) || !isActive(route, now, opts.timezone)) continue;
     const request: TripRequest = {
       ...modes,
-      origin: route.origin || config.homeAddress,
+      // A work route leaves the Drive tile off unless asked for.
+      drive: config.showDrive && (!route.work || config.driveOnWork),
+      origin: route.origin || home,
       destination: route.destination,
       arriveBy: null,
-      uber: config.showUber,
-      lyft: config.showLyft,
     };
     const person = findPerson(route.person, people);
     trips.push({
@@ -73,20 +73,17 @@ export function buildTrips(
     });
   }
 
-  if (config.showCalendar && config.homeAddress) {
+  if (config.showCalendar && home) {
     for (const event of upcomingTrips(opts.events, config, now)) {
       const startsAt = Date.parse(event.start);
       // Rounded to the minute so the request (and its cache entry) stays the
       // same across refreshes.
       const arriveBy = Math.floor((startsAt - config.bufferMinutes * 60_000) / 60_000) * 60_000;
-      const soon = startsAt - now.getTime() <= config.rideshareHours * 3_600_000;
       const request: TripRequest = {
         ...modes,
-        origin: config.homeAddress,
+        origin: home,
         destination: event.location!.trim(),
         arriveBy: arriveBy > now.getTime() ? arriveBy : null,
-        uber: config.showUber && soon,
-        lyft: config.showLyft && soon,
       };
       trips.push({
         key: tripKey(request),
@@ -104,14 +101,6 @@ export function buildTrips(
   return trips;
 }
 
-/** Door to door by ride-hail: wait for the car, then the ride. The ride
- *  falls back to the drive time when the service didn't say. */
-export function rideMinutes(quote: RideQuote, drive?: Mode<DriveTime>): { minutes: number | null; estimated: boolean } {
-  const ride = quote.rideMinutes ?? (drive?.ok ? drive.value.minutes : null);
-  if (ride === null) return { minutes: null, estimated: false };
-  return { minutes: (quote.pickupMinutes ?? 0) + ride, estimated: quote.rideMinutes === null || quote.pickupMinutes === null };
-}
-
 /** The transit option to show first: for an event, the one that leaves
  *  latest while still arriving in time; otherwise the soonest arrival. */
 export function bestTransit(options: TransitOption[], arriveBy: number | null): TransitOption | null {
@@ -127,25 +116,10 @@ export function rideshareMinutes(times: TripTimes | undefined, wait: number): nu
   return times?.drive?.ok ? wait + times.drive.value.minutes : null;
 }
 
-export interface RideTime {
-  /** The live quote, when the service gave one. */
-  live: RideQuote | null;
-  minutes: number | null;
-  /** Any part of the time is a stand-in rather than the service's own number. */
-  estimated: boolean;
-}
-
-/**
- * What an Uber or Lyft tile shows for time: the live quote when it's turned
- * on and answered, else the estimate (wait plus drive) when estimates are on.
- * Null when there's nothing to show.
- */
-export function rideFor(mode: 'uber' | 'lyft', req: TripRequest, times: TripTimes | undefined): RideTime | null {
-  const q = req[mode] ? times?.[mode] : undefined;
-  if (q?.ok) return { live: q.value, ...rideMinutes(q.value, times?.drive) };
-  if (!req.rideshare) return null;
-  const minutes = rideshareMinutes(times, req.rideshareWait);
-  return minutes === null ? null : { live: null, minutes, estimated: true };
+/** An Uber or Lyft tile's door-to-door minutes: the wait plus the drive.
+ *  Null when estimates are off or the drive lookup has no answer. */
+export function rideFor(req: TripRequest, times: TripTimes | undefined): number | null {
+  return req.rideshare ? rideshareMinutes(times, req.rideshareWait) : null;
 }
 
 /** When each shown mode gets there (epoch ms), leaving now, for the modes that answered. */
@@ -155,15 +129,14 @@ export function arrivals(times: TripTimes | undefined, now: number, req: TripReq
   const t = req.transit && times.transit?.ok ? times.transit.value[0] : null;
   if (t?.arriveAt) out.transit = t.arriveAt;
   if (req.drive && times.drive?.ok) out.drive = now + times.drive.value.minutes * 60_000;
-  for (const m of ['uber', 'lyft'] as const) {
-    const r = rideFor(m, req, times);
-    if (r?.minutes != null) out[m] = now + r.minutes * 60_000;
-  }
+  const ride = rideFor(req, times);
+  // Uber and Lyft estimates take the same time; one of them stands for both.
+  if (ride !== null) out.uber = now + ride * 60_000;
   return out;
 }
 
-/** The mode that arrives first leaving now, if at least two answered.
- *  Uber and Lyft estimates tie with each other, so a tie goes to the first. */
+/** The mode that arrives first leaving now, if at least two answered. A
+ *  ride-hail win is reported as 'uber' and highlights both ride tiles. */
 export function fastest(times: TripTimes | undefined, now: number, req: TripRequest): ModeName | null {
   const a = Object.entries(arrivals(times, now, req)) as [ModeName, number][];
   if (a.length < 2) return null;
@@ -177,10 +150,8 @@ export function leaveTimes(trip: Trip, times: TripTimes | undefined): Partial<Re
   const t = times.transit?.ok ? bestTransit(times.transit.value, trip.arriveBy) : null;
   if (t?.leaveAt) out.transit = t.leaveAt;
   if (times.drive?.ok) out.drive = trip.arriveBy - times.drive.value.minutes * 60_000;
-  for (const m of ['uber', 'lyft'] as const) {
-    const r = rideFor(m, trip.request, times);
-    if (r?.minutes != null) out[m] = trip.arriveBy - r.minutes * 60_000;
-  }
+  const ride = rideFor(trip.request, times);
+  if (ride !== null) out.uber = out.lyft = trip.arriveBy - ride * 60_000;
   return out;
 }
 
@@ -198,7 +169,7 @@ const DUE_TOLERANCE_MS = 30_000;
 
 /** A mode the service didn't answer this time, worth asking again soon. */
 export function hasFailure(t: TripTimes): boolean {
-  return [t.transit, t.drive, t.uber, t.lyft].some((m) => m && !m.ok && m.reason === 'unavailable');
+  return [t.transit, t.drive].some((m) => m && !m.ok && m.reason === 'unavailable');
 }
 
 /**
@@ -235,5 +206,5 @@ export function isDue(
 
 /** Google requests one lookup of this trip costs. */
 export function googleCost(req: TripRequest): number {
-  return (req.transit ? 1 : 0) + (req.drive || req.rideshare || req.uber || req.lyft ? 1 : 0);
+  return (req.transit ? 1 : 0) + (req.drive || req.rideshare ? 1 : 0);
 }

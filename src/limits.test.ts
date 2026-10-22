@@ -57,7 +57,7 @@ describe('monthly Google cap', () => {
 });
 
 describe('when trips are looked up', () => {
-  const req = { transit: true, drive: true, rideshare: true, uber: false, lyft: false } as TripRequest;
+  const req = { transit: true, drive: true, rideshare: true, rideshareWait: 5 } as TripRequest;
   const route = { kind: 'route', startsAt: null, destination: 'Office', request: req } as Trip;
   const event = (startsInMs: number) =>
     ({ kind: 'event', startsAt: T0 + startsInMs, destination: 'Clinic', request: req }) as Trip;

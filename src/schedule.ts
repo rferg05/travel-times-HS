@@ -22,7 +22,37 @@ export interface Person {
   id: string;
   name: string;
   color: string;
+  /** The icon picked in Settings > Family. */
+  emoji?: string;
   sourceIds: string[];
+}
+
+/** A Settings > Family member, as the host's /api/family returns it. */
+export interface FamilyMember {
+  id: string;
+  name: string;
+  color: string;
+  emoji?: string;
+}
+
+/**
+ * Everyone in the household with their Family color and icon, plus the
+ * calendars that are theirs. The host only hands plugins people who have a
+ * calendar linked, so the Family list is the source of who exists, and the
+ * calendar list only adds which calendars belong to whom.
+ */
+export function householdPeople(family: FamilyMember[] | null | undefined, calendarPeople: Person[] | undefined): Person[] {
+  const cal = calendarPeople ?? [];
+  if (!family?.length) return cal;
+  return family
+    .filter((m) => m && typeof m.name === 'string' && m.name.trim())
+    .map((m) => ({
+      id: m.id,
+      name: m.name,
+      color: m.color || cal.find((c) => c.id === m.id)?.color || '#94a3b8',
+      emoji: m.emoji || undefined,
+      sourceIds: cal.find((c) => c.id === m.id)?.sourceIds ?? [],
+    }));
 }
 
 /** Day of week and minutes past midnight on the household's wall clock. */

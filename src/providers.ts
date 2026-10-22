@@ -1,7 +1,6 @@
-// Travel-time lookups: Google Routes for transit and driving, Uber and Lyft
-// for ride-hail. Everything goes through the host proxy, which holds the keys
-// and the Uber sign-in; nothing secret reaches this bundle except Lyft's
-// short-lived read-only token (see `lyftToken`).
+// Travel-time lookups: Google Routes for transit and driving. Everything goes
+// through the host proxy, which holds the Google key; nothing secret reaches
+// this bundle.
 //
 // The parsers are exported and pure so they can be tested against recorded
 // response shapes.
@@ -28,12 +27,9 @@ export type Fetcher = (req: ProxyRequest) => Promise<ProxyAnswer>;
 
 /** Why a mode has no time. Each maps to one plain line on the card. */
 export type Reason =
-  | 'notConnected' // Uber not signed in / Lyft or Google credentials not entered
-  | 'reconnect' // Uber sign-in expired
-  | 'notApproved' // Uber hasn't granted this app the estimates endpoints
+  | 'notConnected' // the Google key isn't entered
   | 'badKey' // the service turned the key down
   | 'notFound' // no route between these places, or an address it can't place
-  | 'noService' // no rides of this type here right now
   | 'capped' // this month's Google request limit is used up
   | 'unavailable'; // the service didn't answer properly; try again next time
 
@@ -45,10 +41,6 @@ const fail = <T>(reason: Reason): Mode<T> => ({ ok: false, reason });
 function isMissingSecret(a: ProxyAnswer): boolean {
   const b = a.body as { error?: string; detail?: string } | null;
   return /not configured/i.test(`${b?.detail ?? ''} ${b?.error ?? ''}`);
-}
-
-function isAuthExpired(a: ProxyAnswer): boolean {
-  return a.status === 401 && (a.body as { error?: string } | null)?.error === 'auth_expired';
 }
 
 /** The host proxy allows 60 requests a minute per plugin. Requests go out one
@@ -267,195 +259,6 @@ export async function loadDrive(fetch: Fetcher, origin: string, destination: str
   return drive ? { ok: true, value: drive } : fail('notFound');
 }
 
-// ── Ride-hail ───────────────────────────────────────────────────────────────
-
-export interface RideQuote {
-  /** The ride type as the service names it ("UberX"). */
-  name: string;
-  /** Minutes until a car arrives, when the service says. */
-  pickupMinutes: number | null;
-  /** Minutes in the car, when the service says. */
-  rideMinutes: number | null;
-  /** "$18-23", already formatted for the region. */
-  price: string | null;
-}
-
-const norm = (s: unknown) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
-
-/** The entry whose name is the wanted one, else one that contains it, else the first. */
-function pickByName<T>(list: T[], wanted: string, ...names: ((x: T) => unknown)[]): T | undefined {
-  const w = norm(wanted);
-  return list.find((x) => names.some((n) => norm(n(x)) === w))
-    ?? list.find((x) => names.some((n) => norm(n(x)).includes(w)))
-    ?? list[0];
-}
-
-// Uber ──
-
-const UBER = 'https://api.uber.com/v1.2';
-
-/** Which Uber endpoints this app may use. Uber only opens the estimate
- *  endpoints to approved apps; an unapproved one can still quote its own
- *  developer through the request-estimate endpoint (the `request` scope works
- *  for the app's developers before review). Learned on first use, then kept. */
-let uberPath: 'estimates' | 'requestEstimate' = 'estimates';
-
-export function resetUberPath(): void { uberPath = 'estimates'; }
-
-function uberFailure(a: ProxyAnswer): Reason {
-  if (isAuthExpired(a)) return 'reconnect';
-  if (a.status === 401) return 'notConnected';
-  if (a.status === 403) return 'notApproved';
-  if (a.status === 422 || a.status === 404) return 'noService';
-  return 'unavailable';
-}
-
-export function parseUberEstimates(prices: unknown, times: unknown, product: string): RideQuote | null {
-  const list = (prices as { prices?: Record<string, unknown>[] } | null)?.prices ?? [];
-  const p = pickByName(list, product, (x) => x.display_name, (x) => x.localized_display_name);
-  if (!p) return null;
-  const etas = (times as { times?: Record<string, unknown>[] } | null)?.times ?? [];
-  const t = etas.find((x) => x.product_id === p.product_id);
-  const eta = typeof t?.estimate === 'number' ? Math.round(t.estimate / 60) : null;
-  const duration = typeof p.duration === 'number' ? Math.round(p.duration / 60) : null;
-  return {
-    name: String(p.localized_display_name ?? p.display_name ?? product),
-    pickupMinutes: eta,
-    rideMinutes: duration,
-    price: typeof p.estimate === 'string' && p.estimate ? p.estimate : null,
-  };
-}
-
-export function parseUberRequestEstimate(body: unknown, name: string): RideQuote | null {
-  const b = body as Record<string, unknown> | null;
-  if (!b) return null;
-  const fare = b.fare as { display?: string } | undefined;
-  const trip = b.trip as { duration_estimate?: number } | undefined;
-  const estimate = b.estimate as { display?: string } | undefined;
-  return {
-    name,
-    pickupMinutes: typeof b.pickup_estimate === 'number' ? Math.round(b.pickup_estimate) : null,
-    rideMinutes: typeof trip?.duration_estimate === 'number' ? Math.round(trip.duration_estimate / 60) : null,
-    price: fare?.display ?? estimate?.display ?? null,
-  };
-}
-
-const ll = (prefix: string, p: LatLon) =>
-  `${prefix}_latitude=${p.lat.toFixed(6)}&${prefix}_longitude=${p.lon.toFixed(6)}`;
-
-export async function loadUber(fetch: Fetcher, from: LatLon, to: LatLon, product: string): Promise<Mode<RideQuote>> {
-  if (uberPath === 'estimates') {
-    const prices = await fetch({ url: `${UBER}/estimates/price?${ll('start', from)}&${ll('end', to)}`, cacheTtlMs: 60_000 });
-    if (prices.status === 200) {
-      const times = await fetch({ url: `${UBER}/estimates/time?${ll('start', from)}`, cacheTtlMs: 60_000 });
-      const quote = parseUberEstimates(prices.body, times.status === 200 ? times.body : null, product);
-      return quote ? { ok: true, value: quote } : fail('noService');
-    }
-    if (isAuthExpired(prices) || (prices.status !== 401 && prices.status !== 403)) return fail(uberFailure(prices));
-    // Signed in, but these endpoints aren't open to this app: try the other way.
-    uberPath = 'requestEstimate';
-  }
-
-  const products = await fetch({
-    url: `${UBER}/products?latitude=${from.lat.toFixed(6)}&longitude=${from.lon.toFixed(6)}`,
-    cacheTtlMs: 3_600_000,
-  });
-  if (products.status !== 200) return fail(uberFailure(products));
-  const list = (products.body as { products?: Record<string, unknown>[] } | null)?.products ?? [];
-  const p = pickByName(list, product, (x) => x.display_name);
-  if (!p) return fail('noService');
-  const est = await fetch({
-    url: `${UBER}/requests/estimate`,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    payload: JSON.stringify({
-      product_id: p.product_id,
-      start_latitude: from.lat, start_longitude: from.lon,
-      end_latitude: to.lat, end_longitude: to.lon,
-    }),
-  });
-  if (est.status !== 200) return fail(uberFailure(est));
-  const quote = parseUberRequestEstimate(est.body, String(p.display_name ?? product));
-  return quote ? { ok: true, value: quote } : fail('noService');
-}
-
-// Lyft ──
-
-const LYFT = 'https://api.lyft.com';
-
-/** Lyft's client-credentials token: read-only ("public" scope), good for a
- *  day. The host's auth adapter slot is Uber's, so this one is fetched here,
- *  with the client credentials injected by the proxy. */
-let lyftToken: { value: string; expiresAt: number } | null = null;
-
-export function resetLyftToken(): void { lyftToken = null; }
-
-async function getLyftToken(fetch: Fetcher): Promise<string | Reason> {
-  if (lyftToken && lyftToken.expiresAt > Date.now() + 60_000) return lyftToken.value;
-  const a = await fetch({
-    url: `${LYFT}/oauth/token`,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    payload: JSON.stringify({ grant_type: 'client_credentials', scope: 'public' }),
-    secretInjections: { header: { Authorization: 'Basic {{lyft_basic_auth}}' } },
-  });
-  if (isMissingSecret(a)) return 'notConnected';
-  const b = a.body as { access_token?: string; expires_in?: number } | null;
-  if (a.status !== 200 || !b?.access_token) return a.status === 400 || a.status === 401 ? 'badKey' : 'unavailable';
-  lyftToken = { value: b.access_token, expiresAt: Date.now() + (b.expires_in ?? 3600) * 1000 };
-  return lyftToken.value;
-}
-
-function cents(min: unknown, max: unknown, currency: unknown): string | null {
-  if (typeof min !== 'number' || typeof max !== 'number') return null;
-  const fmt = (c: number) => {
-    try {
-      return new Intl.NumberFormat(undefined, {
-        style: 'currency', currency: typeof currency === 'string' ? currency : 'USD', maximumFractionDigits: 0,
-      }).format(c / 100);
-    } catch {
-      return `$${Math.round(c / 100)}`;
-    }
-  };
-  return Math.round(min / 100) === Math.round(max / 100) ? fmt(min) : `${fmt(min)}-${fmt(max).replace(/^[^\d]+/, '')}`;
-}
-
-export function parseLyft(cost: unknown, eta: unknown, rideType: string): RideQuote | null {
-  const costs = (cost as { cost_estimates?: Record<string, unknown>[] } | null)?.cost_estimates ?? [];
-  const etas = (eta as { eta_estimates?: Record<string, unknown>[] } | null)?.eta_estimates ?? [];
-  const c = pickByName(costs, rideType, (x) => x.ride_type, (x) => x.display_name);
-  const e = etas.find((x) => x.ride_type === (c?.ride_type ?? rideType))
-    ?? pickByName(etas, rideType, (x) => x.ride_type, (x) => x.display_name);
-  if (!c && !e) return null;
-  return {
-    name: String(c?.display_name ?? e?.display_name ?? 'Lyft'),
-    pickupMinutes: typeof e?.eta_seconds === 'number' ? Math.round(e.eta_seconds / 60) : null,
-    rideMinutes: typeof c?.estimated_duration_seconds === 'number' ? Math.round(c.estimated_duration_seconds / 60) : null,
-    price: c && c.is_valid_estimate !== false
-      ? cents(c.estimated_cost_cents_min, c.estimated_cost_cents_max, c.currency)
-      : null,
-  };
-}
-
-export async function loadLyft(fetch: Fetcher, from: LatLon, to: LatLon, rideType: string): Promise<Mode<RideQuote>> {
-  const token = await getLyftToken(fetch);
-  if (token === 'notConnected' || token === 'badKey' || token === 'unavailable') return fail(token as Reason);
-  const headers = { Authorization: `Bearer ${token}` };
-  const q = `start_lat=${from.lat.toFixed(6)}&start_lng=${from.lon.toFixed(6)}`;
-  const cost = await fetch({
-    url: `${LYFT}/v1/cost?${q}&end_lat=${to.lat.toFixed(6)}&end_lng=${to.lon.toFixed(6)}&ride_type=${encodeURIComponent(rideType)}`,
-    headers, cacheTtlMs: 60_000,
-  });
-  if (cost.status === 401) { lyftToken = null; return fail('unavailable'); }
-  if (cost.status !== 200) return fail(cost.status === 400 || cost.status === 404 ? 'noService' : 'unavailable');
-  const eta = await fetch({
-    url: `${LYFT}/v1/eta?lat=${from.lat.toFixed(6)}&lng=${from.lon.toFixed(6)}&ride_type=${encodeURIComponent(rideType)}`,
-    headers, cacheTtlMs: 60_000,
-  });
-  const quote = parseLyft(cost.body, eta.status === 200 ? eta.body : null, rideType);
-  return quote ? { ok: true, value: quote } : fail('noService');
-}
-
 // ── A whole trip ────────────────────────────────────────────────────────────
 
 export interface TripRequest {
@@ -464,66 +267,33 @@ export interface TripRequest {
   /** Plan transit to arrive by this time (epoch ms) instead of leaving now. */
   arriveBy: number | null;
   transit: boolean;
+  /** Show the Drive tile. */
   drive: boolean;
-  uber: boolean;
-  lyft: boolean;
-  /** The estimated Rideshare tile: needs only the drive time. */
+  /** Show the Uber and Lyft estimate tiles, which need the drive lookup. */
   rideshare: boolean;
-  /** Minutes allowed for a rideshare car to arrive. Not part of any lookup. */
+  /** Minutes allowed for a car to arrive. Not part of any lookup. */
   rideshareWait: number;
-  uberProduct: string;
-  lyftRideType: string;
 }
 
 export interface TripTimes {
   transit?: Mode<TransitOption[]>;
   drive?: Mode<DriveTime>;
-  uber?: Mode<RideQuote>;
-  lyft?: Mode<RideQuote>;
   fetchedAt: number;
 }
 
-/** Whether the Uber connection exists, checked at most every few minutes. */
-let uberStatus: { connected: boolean; checkedAt: number } | null = null;
-
-async function uberConnected(): Promise<boolean> {
-  if (uberStatus && Date.now() - uberStatus.checkedAt < 5 * 60_000) return uberStatus.connected;
-  const get = window.__HS_SDK__?.getAuthStatus;
-  // A host without auth status: assume connected and let the call itself say.
-  const connected = get ? (await get(PLUGIN_ID).catch(() => ({ connected: false }))).connected : true;
-  uberStatus = { connected, checkedAt: Date.now() };
-  return connected;
-}
-
-/** Every requested mode for one trip. A mode that fails leaves the rest. */
+/** Every requested lookup for one trip. One that fails leaves the other. */
 export async function loadTrip(fetch: Fetcher, req: TripRequest, now = Date.now()): Promise<TripTimes> {
   const out: TripTimes = { fetchedAt: now };
   const guard = async <T>(f: () => Promise<Mode<T>>): Promise<Mode<T>> => {
     try { return await f(); } catch { return fail('unavailable'); }
   };
-
   if (req.transit) {
     out.transit = await guard(() => loadTransit(fetch, req.origin, req.destination, req.arriveBy, now));
   }
-  // The drive lookup also places both ends for Uber and Lyft, which need
-  // coordinates rather than addresses.
-  const wantsCar = req.drive || req.rideshare || req.uber || req.lyft;
-  const drive = wantsCar ? await guard(() => loadDrive(fetch, req.origin, req.destination)) : undefined;
-  // Kept even when the Drive tile is off: it stands in for a ride's length
-  // when Uber or Lyft doesn't give one.
-  out.drive = drive;
-  const from = drive?.ok ? drive.value.start : null;
-  const to = drive?.ok ? drive.value.end : null;
-  const noPlace = (): Mode<RideQuote> => fail(drive && !drive.ok ? drive.reason : 'notFound');
-
-  if (req.uber) {
-    out.uber = !(await uberConnected())
-      ? fail('notConnected')
-      : from && to ? await guard(() => loadUber(fetch, from, to, req.uberProduct)) : noPlace();
-    if (!out.uber.ok && out.uber.reason === 'reconnect') uberStatus = null;
-  }
-  if (req.lyft) {
-    out.lyft = from && to ? await guard(() => loadLyft(fetch, from, to, req.lyftRideType)) : noPlace();
+  // The drive lookup also gives the distance and time the Uber and Lyft
+  // estimates are priced from, so it runs when either tile needs it.
+  if (req.drive || req.rideshare) {
+    out.drive = await guard(() => loadDrive(fetch, req.origin, req.destination));
   }
   return out;
 }

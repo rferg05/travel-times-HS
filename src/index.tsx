@@ -12,7 +12,10 @@ import type { Fetcher, LatLon, Mode, Reason, TransitLine, TransitOption, TripTim
 import { estimateFare, findCard, formatFare, loadRates, pickRegion, rushMultiplier, serviceFor } from './fares';
 import type { RateCard } from './fares';
 import { isQuiet } from './schedule';
-import type { CalendarEvent, Person } from './schedule';
+import { householdPeople } from './schedule';
+import type { CalendarEvent, FamilyMember, Person } from './schedule';
+import { NEUTRAL_PALETTE, paletteFor } from './colors';
+import type { Palette } from './colors';
 import {
   bestTransit, buildTrips, fastest, FIRST_LOOK_MS, googleCost, isDue, leaveTimes, NEARBY_MILES, rideFor,
 } from './trips';
@@ -32,11 +35,8 @@ const GREEN = '#4ade80';
 
 const REASON_TEXT: Record<Reason, string> = {
   notConnected: 'not set up',
-  reconnect: 'reconnect Uber',
-  notApproved: 'Uber access pending',
   badKey: 'key refused',
   notFound: 'no route found',
-  noService: 'none available',
   capped: 'monthly limit',
   unavailable: 'no answer',
 };
@@ -311,29 +311,31 @@ function LineChip({ line }: { line: TransitLine }) {
 
 const firstName = (name: string) => name.trim().split(/\s+/)[0];
 
-/** The rider's color as a solid disc with their initial: readable as "whose"
- *  from across the room before any name is. */
-function Avatar({ person }: { person: { name: string; color: string } }) {
+/** The rider's Family icon (or initial) on a disc of their color: readable
+ *  as "whose" from across the room before any name is. */
+function Avatar({ person, palette }: { person: Person; palette: Palette }) {
   return (
     <span aria-label={person.name} style={{
-      width: '1.7em', height: '1.7em', borderRadius: '50%', background: person.color, flexShrink: 0,
+      width: '1.8em', height: '1.8em', borderRadius: '50%', background: palette.base, flexShrink: 0,
       display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-      color: '#fff', fontWeight: 800, textShadow: '0 1px 2px rgba(0,0,0,0.45)',
-      boxShadow: '0 0 0 0.12em rgba(255,255,255,0.85)',
+      color: palette.onBase, fontWeight: 800, fontSize: '1em', lineHeight: 1,
+      boxShadow: `0 0 0 0.13em ${palette.ring}`,
     }}>
-      {firstName(person.name).charAt(0).toUpperCase()}
+      {person.emoji
+        ? <span style={{ fontSize: '1.05em' }}>{person.emoji}</span>
+        : firstName(person.name).charAt(0).toUpperCase()}
     </span>
   );
 }
 
-function PersonTag({ people }: { people: { name: string; color: string }[] }) {
+function PersonTag({ people }: { people: { name: string; palette: Palette }[] }) {
   if (!people.length) return null;
   return (
     <span style={{ display: 'inline-flex', gap: '0.3em', flexShrink: 0 }}>
       {people.map((p) => (
         <span key={p.name} style={{
-          padding: '0.15em 0.6em', borderRadius: '1em', fontSize: '0.85em', fontWeight: 700,
-          background: p.color, color: '#fff', textShadow: '0 1px 2px rgba(0,0,0,0.4)',
+          padding: '0.15em 0.65em', borderRadius: '1em', fontSize: '0.85em', fontWeight: 750,
+          background: p.palette.base, color: p.palette.onBase,
         }}>
           {firstName(p.name)}
         </span>
@@ -350,28 +352,31 @@ interface TileProps {
   sub: ReactNode;
   highlight?: boolean;
   tone?: string;
+  palette: Palette;
 }
 
-function Tile({ mode, agency, big, estimated, sub, highlight, tone }: TileProps) {
+function Tile({ mode, agency, big, estimated, sub, highlight, tone, palette }: TileProps) {
   const style: CSSProperties = {
     flex: '1 1 0', minWidth: '6.6em', display: 'flex', flexDirection: 'column', gap: '0.15em',
     padding: '0.4em 0.55em', borderRadius: '0.55em', position: 'relative',
-    background: highlight ? 'rgba(56, 189, 248, 0.18)' : 'rgba(0,0,0,0.28)',
-    border: `0.1em solid ${highlight ? ACCENT : 'rgba(255,255,255,0.10)'}`,
+    background: highlight ? palette.highlightSurface : palette.tile,
+    border: `0.12em solid ${highlight ? palette.highlight : 'rgba(255,255,255,0.08)'}`,
   };
   // Logo and time share a row, so the time can be large without the tile
-  // growing tall; the details sit underneath.
+  // growing tall; the details sit underneath. `data-fit="x"` has the
+  // module's fit shrink the type if a tile's contents would spill sideways.
   return (
     <div style={style}>
       {highlight && (
         <span style={{
-          position: 'absolute', top: '-0.55em', right: '0.5em', fontSize: '0.62em', fontWeight: 800, letterSpacing: '0.04em',
-          padding: '0.05em 0.45em', borderRadius: '0.4em', background: ACCENT, color: '#04263a', textTransform: 'uppercase',
+          position: 'absolute', top: '-0.6em', right: '0.5em', fontSize: '0.62em', fontWeight: 800, letterSpacing: '0.04em',
+          padding: '0.05em 0.45em', borderRadius: '0.4em', background: palette.highlight, color: palette.onHighlight,
+          textTransform: 'uppercase',
         }}>
           fastest
         </span>
       )}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4em', minWidth: 0 }}>
+      <div data-fit="x" style={{ display: 'flex', alignItems: 'center', gap: '0.4em', minWidth: 0, overflow: 'hidden' }}>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3em', fontSize: '0.85em', flexShrink: 0 }}>
           <ModeMark mode={mode} agency={agency} />
         </span>
@@ -387,7 +392,7 @@ function Tile({ mode, agency, big, estimated, sub, highlight, tone }: TileProps)
         )}
       </div>
       <div style={{
-        fontSize: '0.86em', opacity: 0.9, lineHeight: 1.3, minHeight: '1.3em',
+        fontSize: '0.86em', opacity: 0.92, lineHeight: 1.3, minHeight: '1.3em',
         display: 'flex', flexWrap: 'wrap', columnGap: '0.35em', alignItems: 'center',
       }}>
         {sub}
@@ -420,14 +425,18 @@ interface TileCommon {
   now: number;
   clock: (ms: number) => string;
   pricing: Pricing;
+  palette: Palette;
   highlight?: boolean;
 }
 
-function TransitTile({ trip, times, config, now, clock, highlight, leave }: TileCommon & { leave?: number }) {
+function TransitTile({ trip, times, config, now, clock, highlight, leave, palette }: TileCommon & { leave?: number }) {
   const m = times?.transit;
-  if (!m || !m.ok) return <Tile mode="transit" big={null} sub={failText(m)} />;
+  if (!m || !m.ok) return <Tile mode="transit" big={null} sub={failText(m)} palette={palette} />;
   const best = bestTransit(m.value, trip.arriveBy) as TransitOption;
-  const others = m.value.filter((o) => o !== best && o.leaveAt !== null && o.leaveAt > now)
+  // "Then" lists the departures after the one shown, in order.
+  const others = m.value
+    .filter((o) => o !== best && o.leaveAt !== null && o.leaveAt > Math.max(now, best.leaveAt ?? now))
+    .sort((a, b) => a.leaveAt! - b.leaveAt!)
     .slice(0, config.transitOptions - 1);
   const note = trip.kind === 'event'
     ? leaveNote(leave, now, clock)
@@ -440,6 +449,7 @@ function TransitTile({ trip, times, config, now, clock, highlight, leave }: Tile
       big={minutesText(best.minutes)}
       highlight={highlight}
       tone={note?.tone}
+      palette={palette}
       sub={(
         <>
           {lines.map((l, i) => <LineChip key={i} line={l} />)}
@@ -452,48 +462,33 @@ function TransitTile({ trip, times, config, now, clock, highlight, leave }: Tile
   );
 }
 
-/** Uber or Lyft: the live quote when there is one, else the estimate. */
-function RideTile({ mode, trip, times, config, now, clock, pricing, highlight, leave }: TileCommon & {
+/** Uber or Lyft: an estimated time (wait plus drive) and price. */
+function RideTile({ mode, trip, times, config, now, clock, pricing, highlight, leave, palette }: TileCommon & {
   mode: 'uber' | 'lyft';
   leave?: number;
 }) {
-  const ride = rideFor(mode, trip.request, times);
-  if (!ride || ride.minutes === null) {
-    // Nothing to show: say why, preferring the live service's reason when it's the only source.
-    const live = trip.request[mode] ? times?.[mode] : undefined;
-    const reason = live && !live.ok && !trip.request.rideshare ? live : times?.drive;
-    return <Tile mode={mode} big={null} sub={failText(reason)} />;
-  }
+  const minutes = rideFor(trip.request, times);
+  if (minutes === null) return <Tile mode={mode} big={null} sub={failText(times?.drive)} palette={palette} />;
   const note = trip.kind === 'event' ? leaveNote(leave, now, clock) : null;
-  let detail: ReactNode;
-  if (ride.live) {
-    const q = ride.live;
-    detail = <span>{[q.price, q.pickupMinutes !== null ? `car ${q.pickupMinutes}m` : null].filter(Boolean).join(' · ') || q.name}</span>;
-  } else {
-    // Priced for when the car would be called: now, or the leave time for an event.
-    const drive = times?.drive?.ok ? times.drive.value : null;
-    const at = trip.kind === 'event' && leave !== undefined ? Math.max(now, leave) : now;
-    const surge = rushMultiplier(new Date(at), pricing.timezone, config);
-    const service = serviceFor(mode, mode === 'uber' ? config.uberProduct : config.lyftRideType);
-    const card = pricing.cards ? findCard(pricing.cards, pricing.region, mode, service) : null;
-    const fare = card && drive?.miles ? estimateFare(card, drive.miles, drive.minutes, surge) : null;
-    detail = (
-      <>
-        <span style={{ fontWeight: 650 }}>{fare ? formatFare(fare) : 'price n/a'}</span>
-        {surge > 1 && <span style={{ color: AMBER, fontWeight: 650 }}>rush ×{Number(surge.toFixed(2))}</span>}
-      </>
-    );
-  }
+  // Priced for when the car would be called: now, or the leave time for an event.
+  const drive = times?.drive?.ok ? times.drive.value : null;
+  const at = trip.kind === 'event' && leave !== undefined ? Math.max(now, leave) : now;
+  const surge = rushMultiplier(new Date(at), pricing.timezone, config);
+  const service = serviceFor(mode, mode === 'uber' ? config.uberProduct : config.lyftRideType);
+  const card = pricing.cards ? findCard(pricing.cards, pricing.region, mode, service) : null;
+  const fare = card && drive?.miles ? estimateFare(card, drive.miles, drive.minutes, surge) : null;
   return (
     <Tile
       mode={mode}
-      big={minutesText(ride.minutes)}
-      estimated={ride.estimated}
+      big={minutesText(minutes)}
+      estimated
       highlight={highlight}
       tone={note?.tone}
+      palette={palette}
       sub={(
         <>
-          {detail}
+          <span style={{ fontWeight: 650 }}>{fare ? formatFare(fare) : 'price n/a'}</span>
+          {surge > 1 && <span style={{ color: AMBER, fontWeight: 650 }}>rush ×{Number(surge.toFixed(2))}</span>}
           {note && <span style={{ color: note.tone }}>{note.text}</span>}
         </>
       )}
@@ -501,9 +496,9 @@ function RideTile({ mode, trip, times, config, now, clock, pricing, highlight, l
   );
 }
 
-function DriveTile({ trip, times, now, clock, highlight, leave }: TileCommon & { leave?: number }) {
+function DriveTile({ trip, times, now, clock, highlight, leave, palette }: TileCommon & { leave?: number }) {
   const m = times?.drive;
-  if (!m || !m.ok) return <Tile mode="drive" big={null} sub={failText(m)} />;
+  if (!m || !m.ok) return <Tile mode="drive" big={null} sub={failText(m)} palette={palette} />;
   const d = m.value;
   const note = trip.kind === 'event' ? leaveNote(leave, now, clock) : null;
   return (
@@ -512,6 +507,7 @@ function DriveTile({ trip, times, now, clock, highlight, leave }: TileCommon & {
       big={minutesText(d.minutes)}
       highlight={highlight}
       tone={note?.tone}
+      palette={palette}
       sub={(
         <>
           <span style={{ color: d.delayMinutes >= 10 ? RED : d.delayMinutes >= 4 ? AMBER : GREEN }}>
@@ -524,48 +520,40 @@ function DriveTile({ trip, times, now, clock, highlight, leave }: TileCommon & {
   );
 }
 
-/** The card's own colors: its rider's, a stripe per rider when an event is
- *  several people's, neutral when it's nobody's in particular. */
-export function cardColors(people: { color: string }[]): { bar: string; tint: string; border: string } {
-  if (!people.length) {
-    return { bar: 'rgba(255,255,255,0.35)', tint: 'rgba(255,255,255,0.05)', border: 'rgba(255,255,255,0.12)' };
-  }
-  const c = people[0].color;
-  const n = people.length;
-  const bar = n === 1
-    ? c
-    : `linear-gradient(to bottom, ${people.map((p, i) => `${p.color} ${(i / n) * 100}% ${((i + 1) / n) * 100}%`).join(', ')})`;
-  return {
-    bar,
-    tint: `color-mix(in srgb, ${c} 24%, rgba(0,0,0,0.25))`,
-    border: `color-mix(in srgb, ${c} 70%, transparent)`,
-  };
+/** A striped bar for an event on several people's calendars. */
+function barFor(palettes: Palette[]): string {
+  if (palettes.length < 2) return palettes[0]?.base ?? NEUTRAL_PALETTE.base;
+  const n = palettes.length;
+  return `linear-gradient(to bottom, ${palettes.map((p, i) => `${p.base} ${(i / n) * 100}% ${((i + 1) / n) * 100}%`).join(', ')})`;
 }
 
-function TripCard({ trip, times, config, now, clock, pricing, waitUntil, capped }: Omit<TileCommon, 'highlight'> & {
+function TripCard({ trip, times, config, now, clock, pricing, waitUntil, capped }: Omit<TileCommon, 'highlight' | 'palette'> & {
   waitUntil?: number;
   capped?: boolean;
 }) {
   const best = trip.kind === 'route' ? fastest(times, now, trip.request) : null;
   const leave = trip.kind === 'event' ? leaveTimes(trip, times) : {};
-  const common = { trip, times, config, now, clock, pricing };
-  const riders = trip.people.length
-    ? trip.people
-    : trip.personName ? [{ name: trip.personName, color: 'rgba(255,255,255,0.45)' }] : [];
-  const colors = cardColors(trip.people);
+  // The first rider's color drives the card; more riders add stripes and discs.
+  const palettes = trip.people.map((p) => paletteFor(p.color));
+  const palette = palettes[0] ?? NEUTRAL_PALETTE;
+  const common = { trip, times, config, now, clock, pricing, palette };
+  const tags = trip.people.length
+    ? trip.people.map((p, i) => ({ name: p.name, palette: palettes[i] }))
+    : trip.personName ? [{ name: trip.personName, palette: NEUTRAL_PALETTE }] : [];
   const r = trip.request;
+  const rideBest = best === 'uber';
   return (
     <div style={{
       display: 'flex', borderRadius: '0.75em', overflow: 'hidden', flexShrink: 0,
-      background: colors.tint, border: `0.12em solid ${colors.border}`,
+      background: palette.surface, border: `0.14em solid ${palette.rim}`,
     }}>
-      <div style={{ width: '0.55em', flexShrink: 0, background: colors.bar }} />
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '0.45em', padding: '0.55em 0.7em' }}>
+      <div style={{ width: '0.6em', flexShrink: 0, background: barFor(palettes) }} />
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '0.5em', padding: '0.6em 0.7em' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.55em', minWidth: 0 }}>
           {trip.people.length > 0 && (
             <span style={{ display: 'inline-flex' }}>
               {trip.people.map((p, i) => (
-                <span key={p.id} style={{ marginLeft: i ? '-0.45em' : 0 }}><Avatar person={p} /></span>
+                <span key={p.id} style={{ marginLeft: i ? '-0.45em' : 0 }}><Avatar person={p} palette={palettes[i]} /></span>
               ))}
             </span>
           )}
@@ -577,17 +565,17 @@ function TripCard({ trip, times, config, now, clock, pricing, waitUntil, capped 
               {trip.startsAt !== null ? `${clock(trip.startsAt)} · ` : 'to '}{shortPlace(trip.destination)}
             </span>
           </div>
-          <PersonTag people={riders} />
+          <PersonTag people={tags} />
         </div>
         {!times && (capped || waitUntil !== undefined) ? (
-          <div style={{ fontSize: '0.8em', opacity: 0.7 }}>
+          <div style={{ fontSize: '0.8em', opacity: 0.75 }}>
             {capped ? 'Paused for the rest of the month' : `Travel times from ${clock(waitUntil!)}`}
           </div>
         ) : (
-          <div style={{ display: 'flex', gap: '0.45em', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: '0.45em', flexWrap: 'wrap', paddingTop: '0.3em' }}>
             {r.transit && <TransitTile {...common} highlight={best === 'transit'} leave={leave.transit} />}
-            {(r.uber || r.rideshare) && <RideTile {...common} mode="uber" highlight={best === 'uber'} leave={leave.uber} />}
-            {(r.lyft || r.rideshare) && <RideTile {...common} mode="lyft" highlight={best === 'lyft'} leave={leave.lyft} />}
+            {r.rideshare && <RideTile {...common} mode="uber" highlight={rideBest} leave={leave.uber} />}
+            {r.rideshare && <RideTile {...common} mode="lyft" highlight={rideBest} leave={leave.lyft} />}
             {r.drive && <DriveTile {...common} highlight={best === 'drive'} leave={leave.drive} />}
           </div>
         )}
@@ -624,6 +612,23 @@ function useBoxSize(ref: React.RefObject<HTMLDivElement | null>): { w: number; h
     return () => ro.disconnect();
   }, [ref]);
   return size;
+}
+
+// ── Family ──────────────────────────────────────────────────────────────────
+
+/** Stands in for the host's fetch hook where there is none (tests). */
+const noFetch = <T,>(_url: string | null, _ms: number): [T | null, string | null] => [null, null];
+
+/**
+ * Settings > Family, through the host's own fetch hook (which carries the
+ * display's credentials and shares the host's cache). The calendar props only
+ * include people who have a calendar linked; this has everyone, with their
+ * color and icon.
+ */
+function useFamily(): FamilyMember[] | null {
+  const useFetch = window.__HS_SDK__?.useFetchData ?? noFetch;
+  const [data] = useFetch<{ members?: FamilyMember[] }>('/api/family', 5 * 60_000);
+  return Array.isArray(data?.members) ? data.members : null;
 }
 
 // ── Rate cards ──────────────────────────────────────────────────────────────
@@ -676,10 +681,15 @@ export default function TravelTimes(props: TravelTimesProps) {
   const minute = Math.floor(now / 60_000);
 
   const events = props.events as CalendarEvent[] | undefined;
-  const people = props.people as Person[] | undefined;
+  const family = useFamily();
+  const people = useMemo(() => householdPeople(family, props.people as Person[] | undefined), [family, props.people]);
+  // Where trips start: the home address, else the household location from Settings.
+  const hostHome = typeof props.latitude === 'number' && typeof props.longitude === 'number'
+    ? `${props.latitude},${props.longitude}` : '';
+  const homeOrigin = config.homeAddress || hostHome;
   const trips = useMemo(
-    () => buildTrips(config, new Date(minute * 60_000), { timezone, events, people }),
-    [config, minute, timezone, events, people],
+    () => buildTrips(config, new Date(minute * 60_000), { timezone, events, people, home: homeOrigin }),
+    [config, minute, timezone, events, people, homeOrigin],
   );
   const home = useHome(fetcher, config.homeAddress, props.latitude, props.longitude);
   const miles = useEventDistances(trips, fetcher, home);
@@ -719,7 +729,7 @@ export default function TravelTimes(props: TravelTimesProps) {
   const { boxRef, fontSize } = useFitFontSize(textSize * sizeScale * MAX_GROW, resetKey);
   const showsEstimates = config.showRideshare && trips.length > 0;
 
-  const needsSetup = !config.routes.some((r) => r.destination) && !(config.showCalendar && config.homeAddress);
+  const needsSetup = !config.routes.some((r) => r.destination) && !(config.showCalendar && homeOrigin);
   const quiet = isQuiet(config, new Date(now), timezone);
   const card = (t: Trip) => (
     <TripCard key={t.key} trip={t} times={times[t.key]} config={config} now={now} clock={clock} pricing={pricing}
@@ -776,8 +786,8 @@ export default function TravelTimes(props: TravelTimesProps) {
         )}
 
         {showsEstimates && (
-          <div style={{ marginTop: 'auto', fontSize: '0.6em', opacity: 0.5 }}>
-            ~ estimated · Uber/Lyft prices from Ridewise rate cards{pricing.region ? ` (${pricing.region})` : ''} · rush pricing is a guess
+          <div style={{ marginTop: 'auto', fontSize: '0.55em', opacity: 0.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            ~ estimated · prices: Ridewise rate cards{pricing.region ? ` (${pricing.region})` : ''} · rush pricing is a guess
           </div>
         )}
       </div>

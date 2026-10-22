@@ -16,14 +16,16 @@ export interface SavedRoute {
   /** "HH:MM", or '' for no limit. */
   activeFrom: string;
   activeTo: string;
+  /** An office/work route: its Drive tile follows `driveOnWork`. */
+  work: boolean;
 }
 
 export interface Config {
   routes: SavedRoute[];
   showTransit: boolean;
-  showUber: boolean;
-  showLyft: boolean;
   showDrive: boolean;
+  /** Show the Drive tile on routes marked as work/office routes. */
+  driveOnWork: boolean;
   /** An estimated ride-hail tile from the drive time, for when Uber and
    *  Lyft won't give quotes. */
   showRideshare: boolean;
@@ -43,7 +45,6 @@ export interface Config {
   homeAddress: string;
   calendarHours: number;
   maxEvents: number;
-  rideshareHours: number;
   bufferMinutes: number;
   eventFilter: string[];
   showTitle: boolean;
@@ -91,6 +92,7 @@ function readRoute(raw: unknown): SavedRoute {
     days,
     activeFrom: clockTime(r.activeFrom),
     activeTo: clockTime(r.activeTo),
+    work: r.work === true || r.work === 'true',
   };
 }
 
@@ -98,11 +100,8 @@ export function readConfig(raw: Record<string, unknown>): Config {
   return {
     routes: Array.isArray(raw.routes) ? raw.routes.map(readRoute) : [],
     showTransit: on(raw.showTransit),
-    // Off unless turned on: Uber only answers apps it has approved.
-    showUber: raw.showUber === true || raw.showUber === 'true',
-    // Off unless turned on: Lyft no longer gives new developers API access.
-    showLyft: raw.showLyft === true || raw.showLyft === 'true',
     showDrive: on(raw.showDrive),
+    driveOnWork: raw.driveOnWork === true || raw.driveOnWork === 'true',
     showRideshare: on(raw.showRideshare),
     rideshareWait: Math.round(num(raw.rideshareWait, 5, 0, 30)),
     rateRegion: /^auto$/i.test(str(raw.rateRegion)) ? '' : str(raw.rateRegion),
@@ -116,7 +115,6 @@ export function readConfig(raw: Record<string, unknown>): Config {
     homeAddress: str(raw.homeAddress),
     calendarHours: num(raw.calendarHours, 12, 1, 48),
     maxEvents: Math.round(num(raw.maxEvents, 3, 1, 6)),
-    rideshareHours: num(raw.rideshareHours, 3, 0, 12),
     bufferMinutes: Math.round(num(raw.bufferMinutes, 5, 0, 30)),
     eventFilter: str(raw.eventFilter).split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
     showTitle: on(raw.showTitle),

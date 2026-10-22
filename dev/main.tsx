@@ -9,10 +9,15 @@ import { makeHostDisplayCache } from './host-cache';
 (window as unknown as { React: typeof React }).React = React;
 (window as unknown as { __HS_SDK__: unknown }).__HS_SDK__ = {
   displayCache: makeHostDisplayCache(),
-  getAuthStatus: async () => ({ connected: true }),
+  // The host's fetch hook; here it only answers Settings > Family.
+  useFetchData: (url: string | null) => (url === '/api/family' ? [FAMILY, null] : [null, null]),
 };
 
 const params = new URLSearchParams(location.search);
+const FAMILY = params.get('family') === '0' ? null : { members: [
+  { id: 'p1', name: 'Ryan', color: '#3b82f6', emoji: '🚲' },
+  { id: 'p2', name: 'Audra', color: '#ec4899' },
+], groups: [], revision: '1' };
 // `?usage=8500` starts this month's Google count there, to see the warning.
 // The count otherwise carries over between reloads, like on a display.
 if (params.has('usage')) {
@@ -26,10 +31,10 @@ const style = {
 const w = Number(params.get('w') ?? manifest.defaultSize.w);
 const h = Number(params.get('h') ?? manifest.defaultSize.h);
 
-const people = [
-  { id: 'p1', name: 'Ryan', color: '#3b82f6', sourceIds: ['cal-ryan'] },
-  { id: 'p2', name: 'Audra', color: '#ec4899', sourceIds: ['cal-audra'] },
-];
+// As on the real display: only people with a calendar linked reach the
+// plugin's props (Ryan here); Settings > Family has everyone. `?family=0`
+// leaves the Family list out to see the calendar-only fallback.
+const people = [{ id: 'p1', name: 'Ryan', color: '#3b82f6', sourceIds: ['cal-ryan', 'cal-audra'] }];
 const inMin = (m: number) => new Date(Date.now() + m * 60_000).toISOString();
 const events = [
   { id: 'e1', title: 'Dentist', start: inMin(95), end: inMin(155), location: '30 N Michigan Ave, Chicago, IL', allDay: false, sourceId: 'cal-audra' },
@@ -43,8 +48,8 @@ const config = {
   homeAddress: '1500 N Milwaukee Ave, Chicago, IL',
   quietFrom: '', quietTo: '',
   routes: [
-    { label: 'Work', person: 'Ryan', origin: '', destination: '233 S Wacker Dr, Chicago, IL', days: [], activeFrom: '', activeTo: '' },
-    { label: 'Work', person: 'Audra', origin: '', destination: '875 N Michigan Ave, Chicago, IL', days: [], activeFrom: '', activeTo: '' },
+    { label: 'Work', person: 'Ryan', origin: '', destination: '233 S Wacker Dr, Chicago, IL', days: [], activeFrom: '', activeTo: '', work: false },
+    { label: 'Work', person: 'Audra', origin: '', destination: '525 W Monroe St, Chicago, IL', days: [], activeFrom: '', activeTo: '', work: true },
   ],
   ...Object.fromEntries([...params].filter(([k]) => !['w', 'h', 'fs', 'usage'].includes(k))),
 };

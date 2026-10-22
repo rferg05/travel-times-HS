@@ -6,11 +6,11 @@ Home Screens module: door-to-door times by **CTA/public transit, Uber, Lyft and 
 
 - **Routes**: one card per saved route that's active right now. A route can be limited to certain days and hours ("Work, weekdays 6:00–10:00"), so the wall only shows the commute when it matters, and only looks it up then.
 - **Upcoming**: the next timed calendar events that have a real address (Zoom/Teams/Meet links and all-day events are skipped). Each one shows **when to leave** by each mode to arrive a few minutes early.
-- **Who it's for**: a route's *Who it's for* name is matched against Settings > Family. An event is tagged with whoever's calendar it came from. The whole card is tinted that person's color, with a thick color bar down its left edge, a color disc with their initial, and a name tag, so you can tell whose trip it is from across the room. An event on several people's calendars gets a striped bar and one disc each.
+- **Who it's for**: a route's *Who it's for* name is matched against Settings > Family (full or first name). An event is tagged with whoever's calendar it came from. Each card is colored from that person's Family color: a thick bar down its left edge, a disc with their Family icon (or initial), a filled name tag, a dark surface and tiles in the same hue, a lighter rim, and a light tint of it on the *fastest* tile. Text on the color is white, or near-black on light colors like yellow. You can tell whose trip it is from across the room without reading the name. An event on several people's calendars gets a striped bar and one disc each. Everyone in Settings > Family counts, whether or not they have a calendar linked.
 - **Tiles**, one per mode:
   - **Transit** (the CTA roundel for CTA lines, a train icon and the agency's name otherwise): door-to-door minutes, including walks; the line(s) to take; when to leave; the next departures after it.
-  - **Uber** and **Lyft** (their wordmarks): an estimated door-to-door time and price. The time is a wait for the car you set (5 minutes by default) plus the drive in traffic, marked `~`. The price follows [Ridewise's method](https://getridewise.com/methodology), see [Ride price estimates](#ride-price-estimates). An amber *rush ×1.25* means the rush-hour adjustment is in it. With live quotes turned on and working, a tile shows the service's own price and pickup time instead.
-  - **Drive**: minutes in current traffic and how much traffic adds.
+  - **Uber** and **Lyft** (their wordmarks): an estimated door-to-door time and price. The time is a wait for the car you set (5 minutes by default) plus the drive in traffic, marked `~`. The price follows [Ridewise's method](https://getridewise.com/methodology), see [Ride price estimates](#ride-price-estimates). An amber *rush ×1.25* means the rush-hour adjustment is in it.
+  - **Drive**: minutes in current traffic and how much traffic adds. Hidden on routes marked *Work / office route*, unless *Drive time on work routes* is on.
   - **fastest** marks whichever mode gets there first if you leave now. A leave time turns amber within 10 minutes and says *leave now* / *too late* after that.
 
 ## Install
@@ -25,7 +25,9 @@ This always points at the newest release. Home Screens doesn't check URL-install
 
 ## Setup
 
-Open Plugin Store > **Installed** > Travel Times and fill in the credentials below. Only Google is required. The Uber and Lyft tiles work from estimates without any Uber or Lyft account; live quotes are optional.
+1. Open Plugin Store > **Installed** > Travel Times and enter your Google Maps key (below). It's the only credential: the Uber and Lyft tiles are estimates and need no Uber or Lyft account.
+2. In the module's settings, under **Routes**, set **Home address**. Routes with a blank *From* start there, and so do trips to calendar events. Left blank, the household location from Settings > Location is used.
+3. Add your routes. Mark commutes as **Work / office route** to leave their Drive tile off.
 
 ### 1. Google Maps (transit and driving) — required
 
@@ -33,60 +35,27 @@ Open Plugin Store > **Installed** > Travel Times and fill in the credentials bel
 2. APIs & Services > Credentials > **Create credentials > API key**. Restrict it to the Routes API.
 3. Paste it into **Google Maps API key**. If the built-in Traffic module already has a key with the Routes API enabled, the same key works.
 
-### 2. Uber (optional, needs Uber's approval)
+### Why there are no live Uber or Lyft quotes
 
-Live Uber prices and pickup times aren't self-serve. As of October 2026:
-
-- Uber's developer dashboard no longer offers the Riders API ("Ride Requests") as an API suite. New apps start in a sandbox with only the scopes their suite grants, and the rider suites available (e.g. *Rider3PLTesting*) grant partner-loyalty scopes, not ride estimates.
-- The [price](https://developer.uber.com/docs/riders/references/api/v1.2/estimates-price-get) and time estimate endpoints say access "requires approval from Uber" through an Uber business-development contact.
-- The older "Limited Access" for an app's own developers doesn't apply: a new app's sign-in request for even the basic `profile` scope comes back `invalid_scope`.
-
-So the Uber tile shows an estimate (see below) unless live quotes are turned on. If Uber does approve an app for ride estimates:
-
-1. In that app's settings, add the redirect URI `http://localhost:3000/api/plugins/auth/callback`, and copy its **Client ID** and **Client Secret** into the plugin's Uber fields.
-2. Connect from an editor opened at `http://localhost:3000`, because Uber only accepts `https` or `localhost` redirect addresses and the Pi serves plain `http`. Either use a browser on the Pi itself, or forward the port from another computer:
-
-   ```bash
-   ssh -L 3000:localhost:3000 pi@home-screens.local
-   ```
-
-   then open `http://localhost:3000`, go to Plugin Store > Installed > Travel Times, and press **Connect**.
-3. Turn on **Uber (live quotes)** in the module settings. The tile falls back to the estimate whenever a live quote isn't available.
-
-The module asks for the `profile` and `request` scopes and uses the v1.2 estimate endpoints, falling back to the request-estimate endpoint if those refuse. An approved app may come with different endpoints or scopes; if so, the Uber code in `src/providers.ts` needs updating to match.
-
-### 3. Lyft
-
-Lyft's public API is mostly closed to new developers: the old `developer.lyft.com` site no longer exists and the developer portal at [lyft.com/developers](https://www.lyft.com/developers) needs a sign-in. If your account can still create an app there:
-
-1. Create an app and copy its **Client ID** and **Client Secret**.
-2. The plugin needs them joined as `id:secret` and base64-encoded. In PowerShell:
-
-   ```powershell
-   [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('CLIENT_ID:CLIENT_SECRET'))
-   ```
-
-3. Paste the result into **Lyft client credentials**.
-
-This uses Lyft's read-only client-credentials token (cost and pickup-time estimates only). The host's one sign-in slot per plugin is Uber's, so this token is requested by the module itself. The client secret still never leaves the Pi, only the day-long read-only token does. If Lyft won't give you credentials, turn the Lyft tile off.
+Uber's developer dashboard no longer offers self-serve ride estimates: new apps get only the scopes of their API suite (partner-loyalty for *Rider3PLTesting*, none for *Others*), and the [estimate endpoints](https://developer.uber.com/docs/riders/references/api/v1.2/estimates-price-get) need approval through an Uber business-development contact. Lyft's public developer site is gone. So the plugin uses estimates only (see [Ride price estimates](#ride-price-estimates)); earlier versions' Uber sign-in and Lyft credential fields were removed in 1.4.0.
 
 ## Settings
 
 | Setting | Default | |
 |---|---|---|
-| Saved routes | one *Work* route | Name, who it's for, from, to, days, and an optional time window. *From* left blank uses the home address. Addresses or `lat,lon`. |
+| Home address | blank | Start of routes with a blank *From*, and of trips to events. Blank uses the household location from Settings. |
+| Saved routes | one *Work* route | Name, who it's for, from, to, days, an optional time window, and *Work / office route*. Addresses or `lat,lon`. |
 | Public transit / Uber and Lyft estimates / Drive | on | Which tiles to show. |
 | Wait for a car | 5 min | Added to the drive time for the Uber and Lyft estimates. |
 | Price region | nearest to home | A Ridewise region name, e.g. `Chicago Metro`. |
 | Rush-hour pricing / multiplier | on / ×1.25 | See [Ride price estimates](#ride-price-estimates). |
-| Uber (live quotes) / Lyft (live quotes) | off | Need credentials; see Setup. |
 | Transit departures to list | 2 | The first, plus "then 8:12, 8:20". |
-| Uber ride type | UberX | Matched by name: Comfort, UberXL, Black... |
-| Lyft ride type | Lyft | |
-| Upcoming events | on | Needs a **home address**: trips to events start there. |
+| Uber ride type | UberX | UberX, Comfort, UberXL or Black: picks the rate card. |
+| Lyft ride type | Lyft | Lyft, Lyft XL or Lux. |
+| Drive time on work routes | off | Shows the Drive tile on routes marked *Work / office route*. |
+| Upcoming events | on | Trips start from the home address, or the household location. |
 | Look ahead | 12 h | |
 | Events to show | 3 | |
-| Uber/Lyft for events starting within | 3 h | Live quotes only; prices are only good for now. Estimates show for every event. |
 | Arrive early by | 5 min | Built into every leave time. |
 | Skip events whose title contains | | e.g. `WFH, Zoom` |
 | Check times every | 11 min | Routes, far-away events, and nearby events from 90 minutes before. |
@@ -97,7 +66,7 @@ This uses Lyft's read-only client-credentials token (cost and pickup-time estima
 
 ## Ride price estimates
 
-Without live Uber or Lyft quotes, prices are estimated the way [Ridewise](https://getridewise.com/methodology) does it:
+Prices are estimated the way [Ridewise](https://getridewise.com/methodology) does it:
 
 > fare = base fare + per-mile rate × distance + per-minute rate × time + booking fee, at least the minimum fare
 
@@ -124,7 +93,7 @@ For reading across the room, give it at least half the screen. Limiting routes t
 
 ## API usage and cost
 
-**Per check:** one trip is **2 Google requests** (transit and drive), plus 2 to Uber and 2 to Lyft if those are on. The Uber and Lyft estimates reuse the drive lookup (its distance and time) and cost no Google requests. Ridewise's rate file is downloaded at most once a day. Answers are kept between screen rotations, so showing the module on several screens of one display doesn't add requests. Addresses typed in the editor are looked up only after they stop changing for 2 seconds.
+**Per check:** one trip is **2 Google requests** (transit and drive). The drive lookup runs even on a work route with its Drive tile hidden, because the Uber and Lyft estimates reuse the drive lookup (its distance and time) and cost no extra Google requests. Ridewise's rate file is downloaded at most once a day. Answers are kept between screen rotations, so showing the module on several screens of one display doesn't add requests. Addresses typed in the editor are looked up only after they stop changing for 2 seconds.
 
 **When:**
 - **Routes** refresh every 11 minutes while they're showing, paused 23:00–05:30. That's about 95 checks, **~190 Google requests a day** per route. A weekday route is about 4,200 a month, or about 950 if it's limited to 6:00–10:00.
@@ -149,7 +118,7 @@ Requests go out one at a time, at most 50 a minute, under the host proxy's 60-a-
 ```bash
 npm install
 npm test             # parsers, schedules, events, leave times
-npm run preview      # module against mock Google, Uber, Lyft, Ridewise and geocoder at http://localhost:5175
+npm run preview      # module against mock Google, Ridewise, geocoder and Family list at http://localhost:5175
 npm run build        # dist/bundle.js
 ```
 

@@ -1,11 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { readConfig } from './config';
-import {
-  loadTrip, parseDrive, parseLatLon, parseLyft, parseTransit, parseUberEstimates, parseUberRequestEstimate,
-  resetLyftToken, resetUberPath,
-} from './providers';
+import { loadTrip, parseDrive, parseLatLon, parseTransit } from './providers';
 import type { Fetcher, ProxyRequest, TripRequest } from './providers';
-import { findPerson, inWindow, isActive, upcomingTrips } from './schedule';
+import { findPerson, householdPeople, inWindow, isActive, upcomingTrips } from './schedule';
 import type { Person } from './schedule';
 import { bestTransit, buildTrips, fastest, leaveTimes, rideshareMinutes } from './trips';
 
@@ -81,36 +78,6 @@ describe('parseDrive', () => {
   });
 });
 
-describe('ride-hail parsers', () => {
-  it('picks the configured Uber product', () => {
-    const q = parseUberEstimates(
-      { prices: [
-        { product_id: 'a', display_name: 'UberXL', estimate: '$30-38', duration: 1320 },
-        { product_id: 'b', display_name: 'UberX', estimate: '$18-23', duration: 1260 },
-      ] },
-      { times: [{ product_id: 'b', estimate: 240 }, { product_id: 'a', estimate: 420 }] },
-      'uberx',
-    );
-    expect(q).toEqual({ name: 'UberX', pickupMinutes: 4, rideMinutes: 21, price: '$18-23' });
-  });
-
-  it('reads a request estimate', () => {
-    expect(parseUberRequestEstimate(
-      { fare: { display: '$21.40' }, trip: { duration_estimate: 1200 }, pickup_estimate: 3 }, 'UberX',
-    )).toEqual({ name: 'UberX', pickupMinutes: 3, rideMinutes: 20, price: '$21.40' });
-  });
-
-  it('reads Lyft cost and eta', () => {
-    const q = parseLyft(
-      { cost_estimates: [{ ride_type: 'lyft', display_name: 'Lyft', estimated_cost_cents_min: 1700, estimated_cost_cents_max: 2200, estimated_duration_seconds: 1250, currency: 'USD', is_valid_estimate: true }] },
-      { eta_estimates: [{ ride_type: 'lyft', display_name: 'Lyft', eta_seconds: 360 }] },
-      'lyft',
-    );
-    expect(q).toMatchObject({ name: 'Lyft', pickupMinutes: 6, rideMinutes: 21 });
-    expect(q?.price).toMatch(/^\$17-22$/);
-  });
-});
-
 describe('schedule', () => {
   it('handles windows that wrap midnight', () => {
     expect(inWindow(23 * 60, '22:00', '02:00')).toBe(true);
@@ -119,7 +86,7 @@ describe('schedule', () => {
     expect(inWindow(12 * 60, '', '')).toBe(true);
   });
 
-  const base = { label: 'Work', person: '', origin: 'a', destination: 'b', days: [], activeFrom: '', activeTo: '' };
+  const base = { label: 'Work', person: '', origin: 'a', destination: 'b', days: [], activeFrom: '', activeTo: '', work: false };
 
   it('shows a route on its days and hours only', () => {
     const now = new Date(T0); // Wednesday 08:00 in Chicago
@@ -171,17 +138,47 @@ describe('schedule', () => {
       ['event', 'Dentist', ['Audra']],
     ]);
     expect(trips[0].request.origin).toBe('Home St');
-    // Arrive five minutes early by default; rideshare only within 3 hours.
+    // Arrive five minutes early by default.
     expect(trips[1].arriveBy).toBe(T0 + 115 * 60_000);
-    expect(trips[1].request.uber).toBe(false);
     expect(trips[1].request.rideshare).toBe(true);
   });
 
-  it('defaults to the estimated rideshare tile, with live Uber off', () => {
+  it('starts from the household location when there is no home address', () => {
+    const config = readConfig({ homeAddress: '', routes: [{ ...base, origin: '' }] });
+    const trips = buildTrips(config, new Date(T0), { timezone: TZ, home: '41.9087,-87.6776' });
+    expect(trips[0].request.origin).toBe('41.9087,-87.6776');
+    expect(buildTrips(config, new Date(T0), { timezone: TZ })).toEqual([]);
+  });
+
+  it('leaves the Drive tile off work routes unless asked', () => {
+    const routes = [{ ...base, work: true }, { ...base, label: 'Gym' }];
+    const off = buildTrips(readConfig({ routes }), new Date(T0), { timezone: TZ });
+    expect(off.map((t) => t.request.drive)).toEqual([false, true]);
+    const on = buildTrips(readConfig({ routes, driveOnWork: true }), new Date(T0), { timezone: TZ });
+    expect(on.map((t) => t.request.drive)).toEqual([true, true]);
+    // The estimates still get their drive lookup.
+    expect(off[0].request.rideshare).toBe(true);
+  });
+
+  it('takes everyone from Settings > Family, with calendars where linked', () => {
+    const family = [
+      { id: '1', name: 'Ryan Smith', color: '#3b82f6', emoji: '🚲' },
+      { id: '2', name: 'Audra', color: '#ec4899' },
+    ];
+    // Only Ryan has a calendar, so the host's calendar list has only him.
+    const merged = householdPeople(family, [{ id: '1', name: 'Ryan Smith', color: '#000', sourceIds: ['cal-r'] }]);
+    expect(merged).toEqual([
+      { id: '1', name: 'Ryan Smith', color: '#3b82f6', emoji: '🚲', sourceIds: ['cal-r'] },
+      { id: '2', name: 'Audra', color: '#ec4899', emoji: undefined, sourceIds: [] },
+    ]);
+    expect(findPerson('audra', merged)?.color).toBe('#ec4899');
+    expect(householdPeople(null, people)).toBe(people);
+  });
+
+  it('defaults to estimated Uber and Lyft tiles', () => {
     const c = readConfig({});
-    expect([c.showRideshare, c.rideshareWait, c.showUber, c.showLyft]).toEqual([true, 5, false, false]);
+    expect([c.showRideshare, c.rideshareWait, c.driveOnWork]).toEqual([true, 5, false]);
     expect([c.rushSurge, c.rushMultiplier, c.rateRegion, c.scaleWithSize]).toEqual([true, 1.25, '', true]);
-    expect(readConfig({ showUber: true }).showUber).toBe(true);
   });
 
   it('looks up the drive for the rideshare tile even with Drive off', async () => {
@@ -191,8 +188,7 @@ describe('schedule', () => {
       return { status: 200, body: { routes: [{ duration: '900s', staticDuration: '900s', legs: [{}] }] } };
     };
     const times = await loadTrip(fetch, {
-      origin: 'a', destination: 'b', arriveBy: null, transit: false, drive: false, uber: false, lyft: false,
-      rideshare: true, rideshareWait: 4, uberProduct: 'UberX', lyftRideType: 'lyft',
+      origin: 'a', destination: 'b', arriveBy: null, transit: false, drive: false, rideshare: true, rideshareWait: 4,
     }, T0);
     expect(log).toHaveLength(1);
     expect(rideshareMinutes(times, 4)).toBe(19);
@@ -207,34 +203,26 @@ describe('a whole trip', () => {
       if (req.url.includes('computeRoutes')) {
         return body.travelMode === 'TRANSIT'
           ? { status: 200, body: transitBody }
-          : { status: 200, body: { routes: [{ duration: '1320s', staticDuration: '1200s', legs: [{ startLocation: { latLng: { latitude: 41.9, longitude: -87.67 } }, endLocation: { latLng: { latitude: 41.88, longitude: -87.63 } } }] }] } };
+          : { status: 200, body: { routes: [{ duration: '1320s', staticDuration: '1200s', distanceMeters: 8047, legs: [{ startLocation: { latLng: { latitude: 41.9, longitude: -87.67 } }, endLocation: { latLng: { latitude: 41.88, longitude: -87.63 } } }] }] } };
       }
-      if (req.url.includes('/estimates/price')) return { status: 401, body: { message: 'unauthorized' } };
-      if (req.url.includes('/products')) return { status: 200, body: { products: [{ product_id: 'x', display_name: 'UberX' }] } };
-      if (req.url.includes('/requests/estimate')) return { status: 200, body: { fare: { display: '$20' }, trip: { duration_estimate: 1260 }, pickup_estimate: 4 } };
-      if (req.url.includes('/oauth/token')) return { status: 500, body: { error: 'Request failed', detail: 'Secret "lyft_basic_auth" is not configured for plugin "travel-times"' } };
       return { status: 404, body: {} };
     };
   }
 
-  it('falls back to request estimates for Uber and reports Lyft as not set up', async () => {
-    resetUberPath();
-    resetLyftToken();
-    (globalThis as { window?: unknown }).window = { __HS_SDK__: { getAuthStatus: async () => ({ connected: true }) } };
+  it('looks up transit and drive, and picks the fastest shown', async () => {
     const log: ProxyRequest[] = [];
     const times = await loadTrip(mockFetcher(log), {
-      origin: 'a', destination: 'b', arriveBy: null, transit: true, drive: true, uber: true, lyft: true,
-      rideshare: false, rideshareWait: 5, uberProduct: 'UberX', lyftRideType: 'lyft',
+      origin: 'a', destination: 'b', arriveBy: null, transit: true, drive: true, rideshare: true, rideshareWait: 5,
     }, T0);
+    expect(log).toHaveLength(2);
     expect(times.transit?.ok).toBe(true);
     expect(times.drive).toEqual({ ok: true, value: expect.objectContaining({ minutes: 22, delayMinutes: 2 }) });
-    expect(times.uber).toEqual({ ok: true, value: { name: 'UberX', pickupMinutes: 4, rideMinutes: 21, price: '$20' } });
-    expect(times.lyft).toEqual({ ok: false, reason: 'notConnected' });
+    if (times.drive?.ok) expect(times.drive.value.miles).toBeCloseTo(5, 1);
     expect(log.find((r) => r.url.includes('computeRoutes'))?.secretInjections?.header?.['X-Goog-Api-Key']).toBe('{{google_maps_key}}');
-    // Leaving now: bus arrives 08:32, drive 08:22, Uber 08:25.
-    const req = { transit: true, drive: true, uber: true, lyft: true, rideshare: false, rideshareWait: 5 } as TripRequest;
+    // Leaving now: bus arrives 08:32, drive 08:22, a ride (5 + 22) 08:27.
+    const req = { transit: true, drive: true, rideshare: true, rideshareWait: 5 } as TripRequest;
     expect(fastest(times, T0, req)).toBe('drive');
-    // With the Drive tile off, Uber is the fastest one shown.
+    // With the Drive tile off, the ride tiles are fastest.
     expect(fastest(times, T0, { ...req, drive: false })).toBe('uber');
   });
 });
@@ -249,16 +237,14 @@ describe('leave times for events', () => {
   });
 
   it('counts back from the arrive-by time', () => {
-    const trip = { arriveBy: T0 + 60 * 60_000, request: { uber: true, rideshare: true, rideshareWait: 7 } } as Parameters<typeof leaveTimes>[0];
+    const trip = { arriveBy: T0 + 60 * 60_000, request: { rideshare: true, rideshareWait: 7 } } as Parameters<typeof leaveTimes>[0];
     const leave = leaveTimes(trip, {
       fetchedAt: T0,
       drive: { ok: true, value: { minutes: 20, delayMinutes: 0, start: null, end: null } },
-      uber: { ok: true, value: { name: 'UberX', pickupMinutes: 5, rideMinutes: null, price: null } },
     });
     expect(leave.drive).toBe(T0 + 40 * 60_000);
-    // No ride length from Uber: the drive time stands in.
-    expect(leave.uber).toBe(T0 + 35 * 60_000);
-    // No live Lyft quote: the estimate is 7 minutes for the car, then the 20-minute drive.
+    // 7 minutes for the car, then the 20-minute drive.
+    expect(leave.uber).toBe(T0 + 33 * 60_000);
     expect(leave.lyft).toBe(T0 + 33 * 60_000);
   });
 });

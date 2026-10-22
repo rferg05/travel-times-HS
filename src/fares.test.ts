@@ -79,17 +79,12 @@ describe('rush hour guess', () => {
 
 describe('Uber and Lyft tiles', () => {
   const drive: TripTimes['drive'] = { ok: true, value: { minutes: 20, delayMinutes: 0, start: null, end: null, miles: 6 } };
-  const req = { uber: false, lyft: true, rideshare: true, rideshareWait: 5 } as TripRequest;
-  it('show the estimate when the live service is off or failed', () => {
-    const times: TripTimes = { fetchedAt: 0, drive, lyft: { ok: false, reason: 'notConnected' } };
-    expect(rideFor('uber', req, times)).toEqual({ live: null, minutes: 25, estimated: true });
-    expect(rideFor('lyft', req, times)).toEqual({ live: null, minutes: 25, estimated: true });
+  const req = { rideshare: true, rideshareWait: 5 } as TripRequest;
+  it('take the wait plus the drive', () => {
+    expect(rideFor(req, { fetchedAt: 0, drive })).toBe(25);
   });
-  it('prefer a live quote', () => {
-    const times: TripTimes = { fetchedAt: 0, drive, lyft: { ok: true, value: { name: 'Lyft', pickupMinutes: 3, rideMinutes: 18, price: '$15' } } };
-    expect(rideFor('lyft', req, times)?.minutes).toBe(21);
-  });
-  it('show nothing with estimates off and no live quote', () => {
-    expect(rideFor('uber', { ...req, rideshare: false }, { fetchedAt: 0, drive })).toBeNull();
+  it('show nothing with estimates off or no drive answer', () => {
+    expect(rideFor({ ...req, rideshare: false }, { fetchedAt: 0, drive })).toBeNull();
+    expect(rideFor(req, { fetchedAt: 0, drive: { ok: false, reason: 'notFound' } })).toBeNull();
   });
 });
