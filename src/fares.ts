@@ -172,11 +172,11 @@ export function estimateFare(card: RateCard, miles: number, minutes: number, sur
   return { low: fare * RANGE_LOW, high: fare * RANGE_HIGH, surge, region: card.region };
 }
 
-/** "$16-22", or "$7" when the range rounds to one number. */
+/** "$16-$22", or "$7" when the range rounds to one number. */
 export function formatFare(e: FareEstimate): string {
   const lo = Math.round(e.low);
   const hi = Math.round(e.high);
-  return lo === hi ? `$${lo}` : `$${lo}–${hi}`;
+  return lo === hi ? `$${lo}` : `$${lo}-$${hi}`;
 }
 
 // ── Loading the cards ───────────────────────────────────────────────────────
@@ -242,6 +242,16 @@ export function pickupWait(service: string, region: string, at: Date, timezone?:
   if (minutes >= 60 && minutes < 5 * 60) return wait + 4;
   if (!weekend && WEEKDAY_PEAKS.some(([from, to]) => minutes >= from && minutes < to)) return wait + 2;
   return wait;
+}
+
+/** The middle of the ride types' waits (the average of the middle two when
+ *  there's an even number), rounded to a minute: one wait for a tile that
+ *  prices several types, without leaning on the quickest or the slowest. */
+export function medianWait(waits: number[]): number {
+  if (!waits.length) return 0;
+  const sorted = [...waits].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return Math.round(sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2);
 }
 
 /** How each Ridewise service is named on a tile. */

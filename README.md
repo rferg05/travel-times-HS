@@ -10,7 +10,7 @@ Home Screens module: door-to-door times by **CTA/public transit, Uber, Lyft and 
 - **Who it's for**: a route's *Who it's for* name is matched against Settings > Family (full or first name). An event is tagged with whoever's calendar it came from. Each card is colored from that person's Family color: a thick bar down its left edge, a disc with their Family icon (any of the 12 member icons Settings > Family offers, or an emoji typed there; otherwise their initial), a filled name tag, a dark surface and tiles in the same hue, a lighter rim, and a light tint of it on the *fastest* tile. Text on the color is white, or near-black on light colors like yellow. You can tell whose trip it is from across the room without reading the name. An event on several people's calendars gets a striped bar and one disc each. Everyone in Settings > Family counts, whether or not they have a calendar linked.
 - **Tiles**, one per mode:
   - **Transit**, one tile per route (the CTA roundel for CTA lines, a train icon and the agency's name otherwise): *Transit routes to show* sets how many different ways are listed, e.g. the Blue Line and the 56 bus. Each shows door-to-door minutes, including walks; the line(s) to take; when to leave home; and *Next - 12:56pm*, the leave-home times for the departures after it on the same line. A departure is dropped 90 seconds after its leave time and the next one moves up; once all of them have gone, the times are looked up again.
-  - **Uber** and **Lyft** (their wordmarks, each turned on separately): an estimated door-to-door time, marked `~`: the expected wait for a car (*car ~5 min*, see [Pickup wait](#pickup-wait)) plus the drive in traffic. Below it, a price for each ride type picked (e.g. *UberX $18–23*, *Black $43–55 ~37 min*), following [Ridewise's method](https://getridewise.com/methodology); see [Ride price estimates](#ride-price-estimates). An amber *rush ×1.25* means the rush-hour adjustment is in the prices.
+  - **Uber** and **Lyft** (their wordmarks, each turned on separately): an estimated door-to-door time, marked `~`: the drive in traffic plus the expected wait for a car (see [Pickup wait](#pickup-wait)). Below it, a price for each ride type picked. With one type, its wait sits in the tile's bottom-right corner (*Wait: ~5 min*). With several, each type's wait follows its price (*UberX $18-$23 (5 min)*, *Black $43-$55 (9 min)*) and the big time uses the median of their waits, following [Ridewise's method](https://getridewise.com/methodology); see [Ride price estimates](#ride-price-estimates). An amber *rush ×1.25* means the rush-hour adjustment is in the prices.
   - **Drive**: minutes in current traffic and how much traffic adds. Hidden on routes marked *Work / office route*, unless *Drive time on work routes* is on.
   - **fastest** marks whichever tile gets there first if you leave now (one badge when tiles tie, e.g. Uber and Lyft). A leave time turns amber within 10 minutes and says *leave now* / *too late* after that.
 
@@ -96,7 +96,9 @@ Ridewise publishes fares, not how long a car takes to come, so the wait is this 
 | Friday and Saturday 22:00–03:00 | +3 min |
 | 1:00–5:00 other nights | +4 min |
 
-For an event, the wait (like the price) is for when you'd call the car: the leave time. The tile shows *car ~5 min* for the first ride type; another type whose total differs shows its own *~37 min*.
+For an event, the wait (like the price) is for when you'd call the car: the leave time. A tile pricing several ride types uses the median of their waits for its big time, its *fastest* comparison and its leave time: with UberX (5 min) and Black (9 min), that's 7.
+
+These waits are starting guesses, not measured: they'll be calibrated against pickup times read from the Uber and Lyft apps.
 
 ## Sizing for a wall display
 
@@ -104,8 +106,8 @@ As with the CTA module: on a 32" 1080p screen read from about 5 feet, the travel
 
 | Module size (1080p) | Showing | Layout | Travel times |
 |---|---|---|---|
-| Strip, 1700×275 | 2 commutes | 2 cards across, tiles in a row | 26 px |
-| 893×676 | 2 commutes | 2 cards across, tiles 2×2 | 35 px |
+| Strip, 1700×275 | 2 commutes | 2 cards across, tiles in a row | 24 px |
+| 893×676 | 2 commutes | 2 cards across, tiles 2×2 | 29 px |
 | 893×676 | 2 commutes + 3 events | 3 cards across, tiles 2 wide | 19 px |
 
 For reading across the room, give it at least half the screen. Limiting routes to the hours they matter, and fewer *Events to show*, keep the type large.

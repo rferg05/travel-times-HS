@@ -12,7 +12,7 @@ import { geocode, milesBetween } from './geo';
 import { alertLevel, browserStore, cappedFetcher, currentUsage, remaining } from './usage';
 import type { DriveTime, Fetcher, LatLon, Mode, Reason, TransitLine, TripTimes } from './providers';
 import {
-  estimateFare, findCard, formatFare, loadRates, pickRegion, pickupWait, rushMultiplier, SERVICE_LABEL,
+  estimateFare, findCard, formatFare, loadRates, medianWait, pickRegion, pickupWait, rushMultiplier, SERVICE_LABEL,
 } from './fares';
 import type { RateCard } from './fares';
 import { isQuiet } from './schedule';
@@ -385,10 +385,12 @@ interface TileProps {
   highlight?: boolean;
   /** Show the "fastest" badge with the highlight (once per tie). */
   badge?: boolean;
+  /** Pinned to the tile's bottom-right corner. */
+  footer?: ReactNode;
   palette: Palette;
 }
 
-function Tile({ mode, agency, big, estimated, sub, highlight, badge = true, palette }: TileProps) {
+function Tile({ mode, agency, big, estimated, sub, highlight, badge = true, footer, palette }: TileProps) {
   const style: CSSProperties = {
     minWidth: 0, display: 'flex', flexDirection: 'column', gap: '0.15em',
     padding: '0.4em 0.55em', borderRadius: '0.55em', position: 'relative',
@@ -430,6 +432,11 @@ function Tile({ mode, agency, big, estimated, sub, highlight, badge = true, pale
       }}>
         {sub}
       </div>
+      {footer && (
+        <div style={{ marginTop: 'auto', alignSelf: 'flex-end', fontSize: '0.86em', opacity: 0.85, whiteSpace: 'nowrap' }}>
+          {footer}
+        </div>
+      )}
     </div>
   );
 }
@@ -516,19 +523,28 @@ function rideQuotes(
   });
 }
 
-/** Uber or Lyft: the first ride type's time up top, a price for each type picked. */
+/** A ride tile's door-to-door minutes: the drive plus the median of the
+ *  picked ride types' waits. */
+export function rideTileMinutes(quotes: RideQuote[]): number {
+  return quotes[0].minutes - quotes[0].wait + medianWait(quotes.map((q) => q.wait));
+}
+
+/** Uber or Lyft: one time up top (drive plus the median wait), a price for
+ *  each ride type picked. One type puts its wait in the bottom corner;
+ *  several put each type's wait after its price. */
 function RideTile({ mode, quotes, leave, now, clock, palette, highlight, badge }: TileBase & {
   mode: 'uber' | 'lyft';
   quotes: RideQuote[];
   leave?: number;
 }) {
-  const first = quotes[0];
+  const several = quotes.length > 1;
   const note = leave !== undefined ? leaveNote(leave, now, clock) : null;
   const surge = Math.max(...quotes.map((q) => q.surge));
   return (
     <Tile
       mode={mode}
-      big={minutesText(first.minutes)}
+      big={minutesText(rideTileMinutes(quotes))}
+      footer={several ? undefined : `Wait: ~${quotes[0].wait} min`}
       estimated
       highlight={highlight}
       badge={badge}
@@ -536,13 +552,16 @@ function RideTile({ mode, quotes, leave, now, clock, palette, highlight, badge }
       sub={(
         <>
           {quotes.map((q) => (
-            <span key={q.service} style={{ flexBasis: '100%', display: 'flex', flexWrap: 'wrap', columnGap: '0.4em', alignItems: 'baseline' }}>
+            // One line per ride type: "Black $43-$55 (9 min)". The fit shrinks the
+            // text rather than let a line wrap.
+            <span key={q.service} data-fit="x" style={{
+              flexBasis: '100%', display: 'flex', columnGap: '0.4em', alignItems: 'baseline', minWidth: 0, overflow: 'hidden',
+            }}>
               <span style={{ opacity: 0.8, whiteSpace: 'nowrap' }}>{SERVICE_LABEL[q.service] ?? q.service}</span>
               <span style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>{q.price ?? 'price n/a'}</span>
-              {q.minutes !== first.minutes && <span style={{ opacity: 0.7, whiteSpace: 'nowrap' }}>~{minutesText(q.minutes)} min</span>}
+              {several && <span style={{ opacity: 0.75, whiteSpace: 'nowrap' }}>({q.wait} min)</span>}
             </span>
           ))}
-          <span style={{ opacity: 0.7 }}>car ~{first.wait} min</span>
           {surge > 1 && <span style={{ color: AMBER, fontWeight: 650 }}>rush ×{Number(surge.toFixed(2))}</span>}
           {note && <span style={{ color: note.tone, fontWeight: 650 }}>{note.text}</span>}
         </>
@@ -618,8 +637,12 @@ function TripCard({ trip, times, config, now, clock, pricing, waitUntil, capped,
     leave[`transit:${t.key}`] = t.main.leaveAt ?? undefined;
     arrive[`transit:${t.key}`] = t.main.arriveAt ?? undefined;
   }
-  if (uber) { leave.uber = isEvent ? trip.arriveBy! - uber[0].minutes * 60_000 : undefined; arrive.uber = now + uber[0].minutes * 60_000; }
-  if (lyft) { leave.lyft = isEvent ? trip.arriveBy! - lyft[0].minutes * 60_000 : undefined; arrive.lyft = now + lyft[0].minutes * 60_000; }
+  for (const [id, quotes] of [['uber', uber], ['lyft', lyft]] as const) {
+    if (!quotes) continue;
+    const minutes = rideTileMinutes(quotes);
+    leave[id] = isEvent ? trip.arriveBy! - minutes * 60_000 : undefined;
+    arrive[id] = now + minutes * 60_000;
+  }
   if (drive && r.drive) { leave.drive = isEvent ? trip.arriveBy! - drive.minutes * 60_000 : undefined; arrive.drive = now + drive.minutes * 60_000; }
   // Fastest is for leaving now, so only routes get it; one badge per tie.
   const best = trip.kind === 'route' ? fastestOf(arrive) : new Set<string>();

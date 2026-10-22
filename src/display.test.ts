@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { avatarContent, lineLabel, planLayout } from './index';
+import { avatarContent, lineLabel, planLayout, rideTileMinutes } from './index';
 
 describe('member disc', () => {
   it('draws Family icons stored as lucide names', () => {
@@ -39,5 +39,14 @@ describe('card layout', () => {
     expect(planLayout(1700, 275, 2, 5, { columns: 1 }).columns).toBe(1);
     expect(planLayout(3000, 200, 2, 4).columns).toBeLessThanOrEqual(2);
     expect(planLayout(1000, 500, 1, 4).columns).toBe(1);
+  });
+});
+
+describe('ride tile time', () => {
+  it('is the drive plus the median wait of the types picked', () => {
+    const q = (service: string, wait: number) => ({ service, wait, minutes: 28 + wait, price: null, surge: 1 });
+    expect(rideTileMinutes([q('uberx', 5)])).toBe(33);
+    expect(rideTileMinutes([q('uberx', 5), q('uber_black', 9)])).toBe(35);
+    expect(rideTileMinutes([q('uberx', 5), q('uber_comfort', 6), q('uber_black', 9)])).toBe(34);
   });
 });

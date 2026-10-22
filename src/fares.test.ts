@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { estimateFare, findCard, formatFare, parseRateCsv, pickRegion, pickupWait, rushMultiplier, SERVICE_LABEL, serviceFor } from './fares';
+import { estimateFare, findCard, formatFare, medianWait, parseRateCsv, pickRegion, pickupWait, rushMultiplier, SERVICE_LABEL, serviceFor } from './fares';
 
 // The header and Chicago/default UberX rows as Ridewise publishes them.
 const CSV = `region,provider,service_type,base_fare_usd,per_mile_usd,per_minute_usd,booking_fee_usd,minimum_fare_usd
@@ -43,7 +43,7 @@ describe('fare estimate', () => {
     const e = estimateFare(card, 5.5, 28, 1);
     expect(e.low).toBeCloseTo(19.265 * 0.88);
     expect(e.high).toBeCloseTo(19.265 * 1.12);
-    expect(formatFare(e)).toBe('$17–22');
+    expect(formatFare(e)).toBe('$17-$22');
   });
 
   it('never goes under the minimum fare', () => {
@@ -72,6 +72,15 @@ describe('rush hour guess', () => {
   });
   it('can be turned off', () => {
     expect(rushMultiplier(at('2026-10-21T13:00:00Z'), TZ, { ...s, rushSurge: false })).toBe(1);
+  });
+});
+
+describe('a tile of several ride types', () => {
+  it('takes the median wait', () => {
+    expect(medianWait([5])).toBe(5);
+    expect(medianWait([5, 9])).toBe(7);
+    expect(medianWait([9, 5, 7])).toBe(7);
+    expect(medianWait([5, 6, 7, 9])).toBe(7); // (6 + 7) / 2 rounded
   });
 });
 
