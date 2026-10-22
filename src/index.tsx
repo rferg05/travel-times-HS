@@ -3,6 +3,8 @@ import type { CSSProperties, ReactNode } from 'react';
 import type { PluginComponentProps } from './hs-plugin';
 import { hostFrameStyle } from './host-style';
 import { useFitFontSize } from './fit';
+import { Baby, Cat, CircleUser, Crown, Dog, Heart, PersonStanding, ShieldUser, Smile, Star, User, UserRound } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { readConfig } from './config';
 import type { Config } from './config';
 import { hostFetcher, loadTrip } from './providers';
@@ -297,6 +299,14 @@ function ModeMark({ mode, agency }: { mode: ModeName; agency?: string }) {
 
 // ── Pieces ──────────────────────────────────────────────────────────────────
 
+/** "CTA Blue Line" as "Blue": the agency and "Line" are already clear from
+ *  the logo and the chip's color. Bus numbers and short names pass through. */
+export function lineLabel(line: TransitLine): string {
+  const name = line.name.trim();
+  const short = name.replace(/^(cta|metra|pace)\s+/i, '').replace(/\s+line$/i, '');
+  return short || name;
+}
+
 function LineChip({ line }: { line: TransitLine }) {
   const bg = line.color ?? 'rgba(255,255,255,0.18)';
   return (
@@ -304,16 +314,38 @@ function LineChip({ line }: { line: TransitLine }) {
       display: 'inline-block', padding: '0.05em 0.4em', borderRadius: '0.35em', fontWeight: 700,
       background: bg, color: line.textColor ?? '#fff', lineHeight: 1.3, whiteSpace: 'nowrap',
     }}>
-      {line.name}
+      {lineLabel(line)}
     </span>
   );
 }
 
 const firstName = (name: string) => name.trim().split(/\s+/)[0];
 
+/** The icons Settings > Family offers for a member, stored as "lucide:<name>"
+ *  (the host's MEMBER_ICONS). Bundled from the same lucide-react version the
+ *  host uses, so they match the Family page. */
+const MEMBER_ICONS: Record<string, LucideIcon> = {
+  user: User, 'user-round': UserRound, baby: Baby, 'circle-user': CircleUser, 'person-standing': PersonStanding,
+  smile: Smile, crown: Crown, star: Star, heart: Heart, 'shield-user': ShieldUser, cat: Cat, dog: Dog,
+};
+
+/** What goes in a member's disc: their Family icon, an emoji they typed, or
+ *  their initial. Icon kinds a plugin can't draw (custom uploads, Font
+ *  Awesome) fall back to the initial rather than showing their stored name. */
+export function avatarContent(value: string | undefined, name: string): { icon: string } | { text: string } {
+  const v = (value ?? '').trim();
+  const lucide = /^lucide:(.+)$/.exec(v);
+  if (lucide && MEMBER_ICONS[lucide[1]]) return { icon: lucide[1] };
+  // Anything else with a "kind:" prefix is a stored reference, not something to print.
+  if (v && !/^[a-z-]+:/i.test(v) && [...v].length <= 4) return { text: v };
+  return { text: firstName(name).charAt(0).toUpperCase() };
+}
+
 /** The rider's Family icon (or initial) on a disc of their color: readable
  *  as "whose" from across the room before any name is. */
 function Avatar({ person, palette }: { person: Person; palette: Palette }) {
+  const content = avatarContent(person.emoji, person.name);
+  const Icon = 'icon' in content ? MEMBER_ICONS[content.icon] : null;
   return (
     <span aria-label={person.name} style={{
       width: '1.8em', height: '1.8em', borderRadius: '50%', background: palette.base, flexShrink: 0,
@@ -321,9 +353,9 @@ function Avatar({ person, palette }: { person: Person; palette: Palette }) {
       color: palette.onBase, fontWeight: 800, fontSize: '1em', lineHeight: 1,
       boxShadow: `0 0 0 0.13em ${palette.ring}`,
     }}>
-      {person.emoji
-        ? <span style={{ fontSize: '1.05em' }}>{person.emoji}</span>
-        : firstName(person.name).charAt(0).toUpperCase()}
+      {Icon
+        ? <Icon size="1.1em" color={palette.onBase} strokeWidth={2.4} aria-hidden />
+        : <span style={{ fontSize: '1.05em' }}>{'text' in content ? content.text : ''}</span>}
     </span>
   );
 }
@@ -351,11 +383,12 @@ interface TileProps {
   estimated?: boolean;
   sub: ReactNode;
   highlight?: boolean;
-  tone?: string;
+  /** Show the "fastest" badge with the highlight (once per tie). */
+  badge?: boolean;
   palette: Palette;
 }
 
-function Tile({ mode, agency, big, estimated, sub, highlight, tone, palette }: TileProps) {
+function Tile({ mode, agency, big, estimated, sub, highlight, badge = true, palette }: TileProps) {
   const style: CSSProperties = {
     flex: '1 1 0', minWidth: '6.6em', display: 'flex', flexDirection: 'column', gap: '0.15em',
     padding: '0.4em 0.55em', borderRadius: '0.55em', position: 'relative',
@@ -367,7 +400,7 @@ function Tile({ mode, agency, big, estimated, sub, highlight, tone, palette }: T
   // module's fit shrink the type if a tile's contents would spill sideways.
   return (
     <div style={style}>
-      {highlight && (
+      {highlight && badge && (
         <span style={{
           position: 'absolute', top: '-0.6em', right: '0.5em', fontSize: '0.62em', fontWeight: 800, letterSpacing: '0.04em',
           padding: '0.05em 0.45em', borderRadius: '0.4em', background: palette.highlight, color: palette.onHighlight,
@@ -384,7 +417,7 @@ function Tile({ mode, agency, big, estimated, sub, highlight, tone, palette }: T
           <span style={{ fontSize: '1.6em', fontWeight: 700, opacity: 0.35, lineHeight: 1 }}>—</span>
         ) : (
           <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: '0.15em', whiteSpace: 'nowrap' }}>
-            <span style={{ fontSize: '1.6em', fontWeight: 750, lineHeight: 1, fontVariantNumeric: 'tabular-nums', color: tone }}>
+            <span style={{ fontSize: '1.6em', fontWeight: 750, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
               {estimated ? '~' : ''}{big}
             </span>
             <span style={{ fontSize: '0.75em', opacity: 0.7 }}>min</span>
@@ -448,14 +481,16 @@ function TransitTile({ trip, times, config, now, clock, highlight, leave, palett
       agency={best.lines.find((l) => l.agency)?.agency}
       big={minutesText(best.minutes)}
       highlight={highlight}
-      tone={note?.tone}
       palette={palette}
       sub={(
         <>
           {lines.map((l, i) => <LineChip key={i} line={l} />)}
           {!lines.length && <span>walk</span>}
-          {note && <span style={{ color: note.tone }}>{note.text}</span>}
-          {others.length > 0 && <span style={{ opacity: 0.75 }}>· then {others.map((o) => clock(o.leaveAt!)).join(', ')}</span>}
+          {note && <span style={{ color: note.tone, fontWeight: 650 }}>{note.text}</span>}
+          {others.length > 0 && (
+            // Later departures, as leave-home times like the one above.
+            <span style={{ opacity: 0.75, flexBasis: '100%' }}>or {others.map((o) => clock(o.leaveAt!)).join(', ')}</span>
+          )}
         </>
       )}
     />
@@ -463,9 +498,10 @@ function TransitTile({ trip, times, config, now, clock, highlight, leave, palett
 }
 
 /** Uber or Lyft: an estimated time (wait plus drive) and price. */
-function RideTile({ mode, trip, times, config, now, clock, pricing, highlight, leave, palette }: TileCommon & {
+function RideTile({ mode, trip, times, config, now, clock, pricing, highlight, badge, leave, palette }: TileCommon & {
   mode: 'uber' | 'lyft';
   leave?: number;
+  badge?: boolean;
 }) {
   const minutes = rideFor(trip.request, times);
   if (minutes === null) return <Tile mode={mode} big={null} sub={failText(times?.drive)} palette={palette} />;
@@ -483,7 +519,7 @@ function RideTile({ mode, trip, times, config, now, clock, pricing, highlight, l
       big={minutesText(minutes)}
       estimated
       highlight={highlight}
-      tone={note?.tone}
+      badge={badge}
       palette={palette}
       sub={(
         <>
@@ -506,7 +542,6 @@ function DriveTile({ trip, times, now, clock, highlight, leave, palette }: TileC
       mode="drive"
       big={minutesText(d.minutes)}
       highlight={highlight}
-      tone={note?.tone}
       palette={palette}
       sub={(
         <>
@@ -575,7 +610,7 @@ function TripCard({ trip, times, config, now, clock, pricing, waitUntil, capped 
           <div style={{ display: 'flex', gap: '0.45em', flexWrap: 'wrap', paddingTop: '0.3em' }}>
             {r.transit && <TransitTile {...common} highlight={best === 'transit'} leave={leave.transit} />}
             {r.rideshare && <RideTile {...common} mode="uber" highlight={rideBest} leave={leave.uber} />}
-            {r.rideshare && <RideTile {...common} mode="lyft" highlight={rideBest} leave={leave.lyft} />}
+            {r.rideshare && <RideTile {...common} mode="lyft" highlight={rideBest} badge={false} leave={leave.lyft} />}
             {r.drive && <DriveTile {...common} highlight={best === 'drive'} leave={leave.drive} />}
           </div>
         )}
@@ -740,7 +775,7 @@ export default function TravelTimes(props: TravelTimesProps) {
     <div ref={measureRef} style={{ width: '100%', height: '100%' }}>
       <div ref={boxRef} style={{ ...hostFrameStyle(style), fontSize, display: 'flex', flexDirection: 'column', gap: '0.6em' }}>
         {config.showTitle && (
-          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', flexShrink: 0 }}>
             <span style={{ fontWeight: 750, fontSize: '1.1em' }}>Travel times</span>
             {updated > 0 && (
               <span style={{ fontSize: '0.7em', opacity: 0.6 }}>
@@ -752,7 +787,7 @@ export default function TravelTimes(props: TravelTimesProps) {
 
         {(capped || nearCap) && (
           <div style={{
-            fontSize: '0.75em', padding: '0.3em 0.6em', borderRadius: '0.5em',
+            fontSize: '0.75em', padding: '0.3em 0.6em', borderRadius: '0.5em', flexShrink: 0,
             color: capped ? RED : AMBER, background: `color-mix(in srgb, ${capped ? RED : AMBER} 14%, transparent)`,
           }}>
             {capped
@@ -762,31 +797,31 @@ export default function TravelTimes(props: TravelTimesProps) {
         )}
 
         {needsSetup && (
-          <div style={{ opacity: 0.75, fontSize: '0.85em' }}>
+          <div style={{ opacity: 0.75, fontSize: '0.85em', flexShrink: 0 }}>
             Add a route, or a home address for calendar events, in this module&apos;s settings.
           </div>
         )}
 
         {routes.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5em' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5em', flexShrink: 0 }}>
             {upcoming.length > 0 && <SectionLabel>Routes</SectionLabel>}
             {routes.map(card)}
           </div>
         )}
 
         {upcoming.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5em' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5em', flexShrink: 0 }}>
             <SectionLabel>Upcoming</SectionLabel>
             {upcoming.map(card)}
           </div>
         )}
 
         {!needsSetup && trips.length === 0 && (
-          <div style={{ opacity: 0.65, fontSize: '0.85em' }}>No trips right now.</div>
+          <div style={{ opacity: 0.65, fontSize: '0.85em', flexShrink: 0 }}>No trips right now.</div>
         )}
 
         {showsEstimates && (
-          <div style={{ marginTop: 'auto', fontSize: '0.55em', opacity: 0.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <div style={{ marginTop: 'auto', fontSize: '0.55em', opacity: 0.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flexShrink: 0 }}>
             ~ estimated · prices: Ridewise rate cards{pricing.region ? ` (${pricing.region})` : ''} · rush pricing is a guess
           </div>
         )}

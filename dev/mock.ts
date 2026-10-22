@@ -20,7 +20,8 @@ function transit(dest: string, arriveBy?: number) {
     ] }],
   });
   const cta = [{ name: 'Chicago Transit Authority' }];
-  const blue = { nameShort: 'Blue', color: '#00a1de', textColor: '#ffffff', vehicle: { type: 'SUBWAY' }, agencies: cta };
+  // Google names CTA rail lines in full and gives no short name.
+  const blue = { name: 'CTA Blue Line', color: '#00a1de', textColor: '#ffffff', vehicle: { type: 'SUBWAY' }, agencies: cta };
   const bus = { nameShort: '56', color: '#565a5c', textColor: '#ffffff', vehicle: { type: 'BUS' }, agencies: cta };
   return { routes: [option(3, blue), option(9, bus, 2), option(11, blue)] };
 }

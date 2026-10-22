@@ -15,8 +15,8 @@ import { makeHostDisplayCache } from './host-cache';
 
 const params = new URLSearchParams(location.search);
 const FAMILY = params.get('family') === '0' ? null : { members: [
-  { id: 'p1', name: 'Ryan', color: '#3b82f6', emoji: '🚲' },
-  { id: 'p2', name: 'Audra', color: '#ec4899' },
+  { id: 'p1', name: 'Ryan', color: '#f97316', emoji: 'lucide:crown' },
+  { id: 'p2', name: 'Audra', color: '#3b82f6', emoji: 'lucide:heart' },
 ], groups: [], revision: '1' };
 // `?usage=8500` starts this month's Google count there, to see the warning.
 // The count otherwise carries over between reloads, like on a display.

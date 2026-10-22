@@ -1,6 +1,6 @@
 {
   "name": "travel-times",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Home Screens plugin: transit, Uber, Lyft and drive times for saved routes and calendar events",
   "license": "MIT",
   "scripts": {
@@ -12,6 +12,7 @@
   "devDependencies": {
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "lucide-react": "1.45.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "typescript": "^5.7.0",
