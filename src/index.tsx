@@ -522,8 +522,9 @@ function RideTile({ mode, quotes, leave, now, clock, palette, highlight, badge }
   leave?: number;
 }) {
   const several = quotes.length > 1;
+  // No rush multiplier on the tile: the estimated price already includes it,
+  // and the footnote says rush pricing is a guess.
   const note = leave !== undefined ? leaveNote(leave, now, clock) : null;
-  const surge = Math.max(...quotes.map((q) => q.surge));
   return (
     <Tile
       mode={mode}
@@ -546,7 +547,6 @@ function RideTile({ mode, quotes, leave, now, clock, palette, highlight, badge }
               {several && <span style={{ opacity: 0.75, whiteSpace: 'nowrap' }}>({q.wait} min)</span>}
             </span>
           ))}
-          {surge > 1 && <span style={{ color: AMBER, fontWeight: 650 }}>rush ×{Number(surge.toFixed(2))}</span>}
           {note && <span style={{ color: note.tone, fontWeight: 650 }}>{note.text}</span>}
         </>
       )}
