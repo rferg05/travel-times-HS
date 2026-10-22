@@ -269,10 +269,8 @@ export interface TripRequest {
   transit: boolean;
   /** Show the Drive tile. */
   drive: boolean;
-  /** Show the Uber and Lyft estimate tiles, which need the drive lookup. */
+  /** Show Uber or Lyft estimate tiles, which need the drive lookup. */
   rideshare: boolean;
-  /** Minutes allowed for a car to arrive. Not part of any lookup. */
-  rideshareWait: number;
 }
 
 export interface TripTimes {

@@ -6,12 +6,13 @@ Home Screens module: door-to-door times by **CTA/public transit, Uber, Lyft and 
 
 - **Routes**: one card per saved route that's active right now. A route can be limited to certain days and hours ("Work, weekdays 6:00–10:00"), so the wall only shows the commute when it matters, and only looks it up then.
 - **Upcoming**: the next timed calendar events that have a real address (Zoom/Teams/Meet links and all-day events are skipped). Each one shows **when to leave** by each mode to arrive a few minutes early.
+- **Layout**: the cards and tiles arrange themselves to the module's shape. A wide, short strip puts trip cards side by side; a tall column stacks them, with tiles wrapping into rows. The module tries each arrangement and uses the one that allows the largest text. *Trip cards side by side* in the settings can fix the number of cards across.
 - **Who it's for**: a route's *Who it's for* name is matched against Settings > Family (full or first name). An event is tagged with whoever's calendar it came from. Each card is colored from that person's Family color: a thick bar down its left edge, a disc with their Family icon (any of the 12 member icons Settings > Family offers, or an emoji typed there; otherwise their initial), a filled name tag, a dark surface and tiles in the same hue, a lighter rim, and a light tint of it on the *fastest* tile. Text on the color is white, or near-black on light colors like yellow. You can tell whose trip it is from across the room without reading the name. An event on several people's calendars gets a striped bar and one disc each. Everyone in Settings > Family counts, whether or not they have a calendar linked.
 - **Tiles**, one per mode:
-  - **Transit** (the CTA roundel for CTA lines, a train icon and the agency's name otherwise): door-to-door minutes, including walks; the line(s) to take ("Blue", "56"); when to leave home for it; and *or 1:01p*, the leave-home time for the next departure after it.
-  - **Uber** and **Lyft** (their wordmarks): an estimated door-to-door time and price. The time is a wait for the car you set (5 minutes by default) plus the drive in traffic, marked `~`. The price follows [Ridewise's method](https://getridewise.com/methodology), see [Ride price estimates](#ride-price-estimates). An amber *rush ×1.25* means the rush-hour adjustment is in it.
+  - **Transit**, one tile per route (the CTA roundel for CTA lines, a train icon and the agency's name otherwise): *Transit routes to show* sets how many different ways are listed, e.g. the Blue Line and the 56 bus. Each shows door-to-door minutes, including walks; the line(s) to take; when to leave home; and *Next - 12:56pm*, the leave-home times for the departures after it on the same line. A departure is dropped 90 seconds after its leave time and the next one moves up; once all of them have gone, the times are looked up again.
+  - **Uber** and **Lyft** (their wordmarks, each turned on separately): an estimated door-to-door time, marked `~`: the expected wait for a car (*car ~5 min*, see [Pickup wait](#pickup-wait)) plus the drive in traffic. Below it, a price for each ride type picked (e.g. *UberX $18–23*, *Black $43–55 ~37 min*), following [Ridewise's method](https://getridewise.com/methodology); see [Ride price estimates](#ride-price-estimates). An amber *rush ×1.25* means the rush-hour adjustment is in the prices.
   - **Drive**: minutes in current traffic and how much traffic adds. Hidden on routes marked *Work / office route*, unless *Drive time on work routes* is on.
-  - **fastest** marks whichever mode gets there first if you leave now (one badge across Uber and Lyft when they tie). A leave time turns amber within 10 minutes and says *leave now* / *too late* after that.
+  - **fastest** marks whichever tile gets there first if you leave now (one badge when tiles tie, e.g. Uber and Lyft). A leave time turns amber within 10 minutes and says *leave now* / *too late* after that.
 
 ## Install
 
@@ -45,13 +46,13 @@ Uber's developer dashboard no longer offers self-serve ride estimates: new apps 
 |---|---|---|
 | Home address | blank | Start of routes with a blank *From*, and of trips to events. Blank uses the household location from Settings. |
 | Saved routes | one *Work* route | Name, who it's for, from, to, days, an optional time window, and *Work / office route*. Addresses or `lat,lon`. |
-| Public transit / Uber and Lyft estimates / Drive | on | Which tiles to show. |
-| Wait for a car | 5 min | Added to the drive time for the Uber and Lyft estimates. |
-| Price region | nearest to home | A Ridewise region name, e.g. `Chicago Metro`. |
+| Public transit / Uber estimates / Lyft estimates / Drive | on | Which tiles to show. |
+| Transit routes to show | 2 | Different ways by transit, each its own tile. Fewer show when Google finds fewer. |
+| Price region | nearest to home | A Ridewise region name, e.g. `Chicago Metro`. Also sets the expected wait for a car. |
 | Rush-hour pricing / multiplier | on / ×1.25 | See [Ride price estimates](#ride-price-estimates). |
-| Transit departures to list | 2 | The first, plus "then 8:12, 8:20". |
-| Uber ride type | UberX | UberX, Comfort, UberXL or Black: picks the rate card. |
-| Lyft ride type | Lyft | Lyft, Lyft XL or Lux. |
+| Departures per transit route | 2 | The first, plus "Next - 12:56pm" for the rest. |
+| Uber ride types | UberX | Any of UberX, Comfort, UberXL, Black: each gets its own price. |
+| Lyft ride types | Lyft | Any of Lyft, Lyft XL, Lux. |
 | Drive time on work routes | off | Shows the Drive tile on routes marked *Work / office route*. |
 | Upcoming events | on | Trips start from the home address, or the household location. |
 | Look ahead | 12 h | |
@@ -61,6 +62,7 @@ Uber's developer dashboard no longer offers self-serve ride estimates: new apps 
 | Check times every | 11 min | Routes, far-away events, and nearby events from 90 minutes before. |
 | Google requests per month | 10,000 | Hard limit, counted per display. Lookups stop for the rest of the month once it's reached. |
 | Warn at | 80% | A notice on the module from 8,000 requests, and a warning in the Home Screens log. |
+| Trip cards side by side | Auto | Auto picks from the module's shape; or 1–4. |
 | Scale with module size | on | Grow text, logos and numbers with the module, as the CTA module does. |
 | Pause lookups | 23:00–05:30 | Shows the last times overnight without asking for new ones. |
 
@@ -75,19 +77,36 @@ shown as a range from 12% under to 12% over, matching Ridewise's stated "typical
 - **Rates:** Ridewise's published rate cards (`getridewise.com/data/ridewise-rate-cards.csv`), covering 27 US regions plus a US Default, for UberX, Comfort, XL and Black, and Lyft, Lyft XL and Lux. The module downloads the file at runtime, at most once a day, and keeps it in the display's browser storage. Ridewise reviews the cards monthly, so updates arrive on their own. If their site can't be reached, the last copy is used. The rate data is Ridewise's. Their methodology page calls it free to cite with attribution, and the module credits them on screen whenever estimates show.
 - **Region:** the nearest Ridewise region within 60 miles of home (the household location in Settings, or the home address), else US Default. *Price region* in the settings overrides it.
 - **Distance and time:** the road distance and the drive time in traffic, both from the same Google driving lookup the Drive tile uses.
-- **Ride type:** *Uber ride type* (UberX, Comfort, XL, Black) and *Lyft ride type* pick which rate card is used.
+- **Ride types:** each type picked under *Uber ride types* / *Lyft ride types* is priced from its own rate card.
 - **Rush hour (this plugin's guess, not Ridewise's):** Ridewise models surge from historical demand but doesn't publish it. With *Rush-hour pricing* on, estimates are multiplied by ×1.25 (adjustable) on weekdays 7:00–9:30 and 16:00–19:00, and on Friday and Saturday nights 22:00–03:00. The half hour either side of a weekday rush gets half the extra. For an event, it's priced at the leave time.
 - **Not included:** live surge, airport surcharges, Chicago's per-ride ground transportation tax and downtown congestion charge, tolls, tips, promotions and memberships (Uber One, Lyft Pink).
+
+## Pickup wait
+
+Ridewise publishes fares, not how long a car takes to come, so the wait is this plugin's own estimate, made the same way as its rush-hour guess:
+
+| | Wait |
+|---|---|
+| UberX, Lyft | 5 min |
+| Comfort | 6 min |
+| UberXL, Lyft XL | 7 min |
+| Black, Lux | 9 min |
+| Outside Ridewise's metro regions (US Default) | +3 min |
+| Weekday rush hours (7:00–9:30, 16:00–19:00) | +2 min |
+| Friday and Saturday 22:00–03:00 | +3 min |
+| 1:00–5:00 other nights | +4 min |
+
+For an event, the wait (like the price) is for when you'd call the car: the leave time. The tile shows *car ~5 min* for the first ride type; another type whose total differs shows its own *~37 min*.
 
 ## Sizing for a wall display
 
 As with the CTA module: on a 32" 1080p screen read from about 5 feet, the travel times need to be roughly 30 px or larger. With *Scale with module size* on, everything grows with the module's area (against its 640×520 reference), then grows up to 1.8× more while the cards still fit. More trips on screen means smaller type. Measured in the preview at default Text size:
 
-| Module size (1080p) | Showing | Travel times | Details line |
+| Module size (1080p) | Showing | Layout | Travel times |
 |---|---|---|---|
-| Half screen, 940×1030 | 2 commutes | 50 px | 27 px |
-| Half screen, 940×1030 | 2 commutes + 3 events | 31 px | 17 px |
-| Full width, 1872×1030 | 2 commutes + 3 events | 34 px | 18 px |
+| Strip, 1700×275 | 2 commutes | 2 cards across, tiles in a row | 26 px |
+| 893×676 | 2 commutes | 2 cards across, tiles 2×2 | 35 px |
+| 893×676 | 2 commutes + 3 events | 3 cards across, tiles 2 wide | 19 px |
 
 For reading across the room, give it at least half the screen. Limiting routes to the hours they matter, and fewer *Events to show*, keep the type large.
 

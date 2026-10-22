@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { estimateFare, findCard, formatFare, parseRateCsv, pickRegion, rushMultiplier, serviceFor } from './fares';
-import type { TripRequest, TripTimes } from './providers';
-import { rideFor } from './trips';
+import { estimateFare, findCard, formatFare, parseRateCsv, pickRegion, pickupWait, rushMultiplier, SERVICE_LABEL, serviceFor } from './fares';
 
 // The header and Chicago/default UberX rows as Ridewise publishes them.
 const CSV = `region,provider,service_type,base_fare_usd,per_mile_usd,per_minute_usd,booking_fee_usd,minimum_fare_usd
@@ -77,14 +75,19 @@ describe('rush hour guess', () => {
   });
 });
 
-describe('Uber and Lyft tiles', () => {
-  const drive: TripTimes['drive'] = { ok: true, value: { minutes: 20, delayMinutes: 0, start: null, end: null, miles: 6 } };
-  const req = { rideshare: true, rideshareWait: 5 } as TripRequest;
-  it('take the wait plus the drive', () => {
-    expect(rideFor(req, { fetchedAt: 0, drive })).toBe(25);
+describe('pickup wait', () => {
+  const wed = (hhmm: string) => new Date(`2026-10-21T${hhmm}:00-05:00`);
+  it('depends on ride type and region', () => {
+    expect(pickupWait('uberx', 'Chicago Metro', wed('12:00'), TZ)).toBe(5);
+    expect(pickupWait('uber_black', 'Chicago Metro', wed('12:00'), TZ)).toBe(9);
+    expect(pickupWait('uberx', 'US Default', wed('12:00'), TZ)).toBe(8);
   });
-  it('show nothing with estimates off or no drive answer', () => {
-    expect(rideFor({ ...req, rideshare: false }, { fetchedAt: 0, drive })).toBeNull();
-    expect(rideFor(req, { fetchedAt: 0, drive: { ok: false, reason: 'notFound' } })).toBeNull();
+  it('is longer at rush hour, late at night and in the small hours', () => {
+    expect(pickupWait('uberx', 'Chicago Metro', wed('08:00'), TZ)).toBe(7);
+    expect(pickupWait('lyft', 'Chicago Metro', wed('03:00'), TZ)).toBe(9);
+    expect(pickupWait('uberx', 'Chicago Metro', new Date('2026-10-24T23:30:00-05:00'), TZ)).toBe(8); // Sat night
+  });
+  it('labels every service', () => {
+    for (const t of ['uberx', 'uber_comfort', 'uber_xl', 'uber_black', 'lyft', 'lyft_xl', 'lyft_lux']) expect(SERVICE_LABEL[t]).toBeTruthy();
   });
 });

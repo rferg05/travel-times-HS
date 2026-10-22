@@ -3,7 +3,7 @@
 // way gets there first.
 
 import type { Config } from './config';
-import type { TransitOption, TripRequest, TripTimes } from './providers';
+import type { TransitLine, TransitOption, TripRequest, TripTimes } from './providers';
 import { eventPeople, findPerson, isActive, isComplete, upcomingTrips } from './schedule';
 import type { CalendarEvent, Person } from './schedule';
 
@@ -44,8 +44,7 @@ export function buildTrips(
   const modes = {
     transit: config.showTransit,
     drive: config.showDrive,
-    rideshare: config.showRideshare,
-    rideshareWait: config.rideshareWait,
+    rideshare: config.uberEstimates || config.lyftEstimates,
   };
   const trips: Trip[] = [];
 
@@ -101,58 +100,77 @@ export function buildTrips(
   return trips;
 }
 
-/** The transit option to show first: for an event, the one that leaves
- *  latest while still arriving in time; otherwise the soonest arrival. */
-export function bestTransit(options: TransitOption[], arriveBy: number | null): TransitOption | null {
-  if (!options.length) return null;
-  if (arriveBy === null) return options[0];
-  const inTime = options.filter((o) => o.arriveAt !== null && o.arriveAt <= arriveBy && o.leaveAt !== null);
-  if (!inTime.length) return options[0];
-  return inTime.reduce((a, b) => ((b.leaveAt ?? 0) > (a.leaveAt ?? 0) ? b : a));
+/** A departure this long past its leave time is dropped, and the next one shown. */
+export const EXPIRE_MS = 90_000;
+
+/** One way by transit: the same line or lines, with its next departures. */
+export interface TransitRoute {
+  /** The lines in order, e.g. "Blue" or "9>Green". */
+  key: string;
+  lines: TransitLine[];
+  /** The departure to show: the next one, or for an event the latest that's in time. */
+  main: TransitOption;
+  /** Departures after `main` on the same lines, soonest first. */
+  next: TransitOption[];
 }
 
-/** The estimate's door-to-door time: wait for a car, then drive. */
-export function rideshareMinutes(times: TripTimes | undefined, wait: number): number | null {
+const stillCatchable = (o: TransitOption, now: number) => o.leaveAt === null || o.leaveAt >= now - EXPIRE_MS;
+
+/**
+ * Google's transit answers grouped into distinct routes (the Blue Line, the
+ * 9 bus to the Green Line...), each with its departures. Departures more than
+ * 90 seconds past their leave time are dropped, so a missed one gives way to
+ * the next. Routes are ordered by when their shown departure arrives, and at
+ * most `maxRoutes` are kept, each with up to `perRoute` departures.
+ */
+export function transitRoutes(
+  options: TransitOption[],
+  now: number,
+  arriveBy: number | null,
+  maxRoutes: number,
+  perRoute: number,
+): TransitRoute[] {
+  const groups = new Map<string, TransitOption[]>();
+  for (const o of options) {
+    if (!stillCatchable(o, now)) continue;
+    const key = o.lines.map((l) => l.name).join('>') || 'walk';
+    groups.set(key, [...(groups.get(key) ?? []), o]);
+  }
+  const routes: TransitRoute[] = [];
+  for (const [key, list] of groups) {
+    const byLeave = [...list].sort((a, b) => (a.leaveAt ?? 0) - (b.leaveAt ?? 0));
+    let main = byLeave[0];
+    if (arriveBy !== null) {
+      // For an event: the latest departure that still arrives in time.
+      const inTime = byLeave.filter((o) => o.arriveAt !== null && o.arriveAt <= arriveBy);
+      if (inTime.length) main = inTime[inTime.length - 1];
+    }
+    const next = byLeave.filter((o) => o !== main && (o.leaveAt ?? 0) > (main.leaveAt ?? 0)).slice(0, perRoute - 1);
+    routes.push({ key, lines: main.lines, main, next });
+  }
+  return routes
+    .sort((a, b) => (a.main.arriveAt ?? Infinity) - (b.main.arriveAt ?? Infinity))
+    .slice(0, maxRoutes);
+}
+
+/** Every transit departure on hand has passed: time to ask again. */
+export function transitExhausted(times: TripTimes, now: number): boolean {
+  const t = times.transit;
+  return !!t?.ok && t.value.length > 0 && !t.value.some((o) => stillCatchable(o, now));
+}
+
+/** Door to door by Uber or Lyft: the wait for a car, then the drive. */
+export function rideMinutes(times: TripTimes | undefined, wait: number): number | null {
   return times?.drive?.ok ? wait + times.drive.value.minutes : null;
 }
 
-/** An Uber or Lyft tile's door-to-door minutes: the wait plus the drive.
- *  Null when estimates are off or the drive lookup has no answer. */
-export function rideFor(req: TripRequest, times: TripTimes | undefined): number | null {
-  return req.rideshare ? rideshareMinutes(times, req.rideshareWait) : null;
-}
-
-/** When each shown mode gets there (epoch ms), leaving now, for the modes that answered. */
-export function arrivals(times: TripTimes | undefined, now: number, req: TripRequest): Partial<Record<ModeName, number>> {
-  const out: Partial<Record<ModeName, number>> = {};
-  if (!times) return out;
-  const t = req.transit && times.transit?.ok ? times.transit.value[0] : null;
-  if (t?.arriveAt) out.transit = t.arriveAt;
-  if (req.drive && times.drive?.ok) out.drive = now + times.drive.value.minutes * 60_000;
-  const ride = rideFor(req, times);
-  // Uber and Lyft estimates take the same time; one of them stands for both.
-  if (ride !== null) out.uber = now + ride * 60_000;
-  return out;
-}
-
-/** The mode that arrives first leaving now, if at least two answered. A
- *  ride-hail win is reported as 'uber' and highlights both ride tiles. */
-export function fastest(times: TripTimes | undefined, now: number, req: TripRequest): ModeName | null {
-  const a = Object.entries(arrivals(times, now, req)) as [ModeName, number][];
-  if (a.length < 2) return null;
-  return a.reduce((x, y) => (y[1] < x[1] ? y : x))[0];
-}
-
-/** When to leave for an event by each mode (epoch ms). */
-export function leaveTimes(trip: Trip, times: TripTimes | undefined): Partial<Record<ModeName, number>> {
-  const out: Partial<Record<ModeName, number>> = {};
-  if (!times || trip.arriveBy === null) return out;
-  const t = times.transit?.ok ? bestTransit(times.transit.value, trip.arriveBy) : null;
-  if (t?.leaveAt) out.transit = t.leaveAt;
-  if (times.drive?.ok) out.drive = trip.arriveBy - times.drive.value.minutes * 60_000;
-  const ride = rideFor(trip.request, times);
-  if (ride !== null) out.uber = out.lyft = trip.arriveBy - ride * 60_000;
-  return out;
+/** The tiles that get there first: every one within a minute of the
+ *  earliest, when at least two tiles have a time to compare. */
+export function fastestOf(arrivals: Record<string, number | undefined>): Set<string> {
+  const known = Object.entries(arrivals).filter((e): e is [string, number] => typeof e[1] === 'number');
+  if (known.length < 2) return new Set();
+  const first = Math.min(...known.map(([, t]) => t));
+  return new Set(known.filter(([, t]) => t - first < 60_000).map(([id]) => id));
 }
 
 // ── When to look a trip up ──────────────────────────────────────────────────
@@ -187,7 +205,8 @@ export function isDue(
   now: number,
   opts: { refreshMs: number; retryMs: number; milesFromHome?: number | null },
 ): boolean {
-  const failed = !!have && hasFailure(have);
+  // A failed lookup, or one whose departures have all gone, is asked again soon.
+  const failed = !!have && (hasFailure(have) || transitExhausted(have, now));
   const olderThan = (ms: number) => !have || now - have.fetchedAt >= ms - DUE_TOLERANCE_MS;
   const cadence = () => olderThan(failed ? Math.min(opts.retryMs, opts.refreshMs) : opts.refreshMs);
 

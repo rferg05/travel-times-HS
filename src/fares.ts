@@ -215,3 +215,37 @@ export async function loadRates(fetch: Fetcher, now = Date.now()): Promise<RateC
   const old = stored ? parseRateCsv(stored.text) : [];
   return old.length ? old : null;
 }
+
+// ── Pickup wait ─────────────────────────────────────────────────────────────
+//
+// Ridewise publishes fares, not how long a car takes to arrive, so the wait
+// is this plugin's own estimate, built the same way as its surge guess: a
+// typical wait per ride type, more outside the big metros (Ridewise's US
+// Default region), more at rush hour and on weekend late nights, and most in
+// the small hours when few drivers are out. Shown with "~" like the rest.
+
+/** Typical minutes for a car to arrive in a big metro, off-peak. */
+const BASE_WAIT: Record<string, number> = {
+  uberx: 5, uber_comfort: 6, uber_xl: 7, uber_black: 9,
+  lyft: 5, lyft_xl: 7, lyft_lux: 9,
+};
+
+export function pickupWait(service: string, region: string, at: Date, timezone?: string): number {
+  let wait = BASE_WAIT[service] ?? 6;
+  if (region === DEFAULT_REGION) wait += 3;
+  const { day, minutes } = wallClock(at, timezone);
+  const weekend = day === 'sat' || day === 'sun';
+  const lateNight = ((day === 'fri' || day === 'sat') && minutes >= 22 * 60)
+    || ((day === 'sat' || day === 'sun') && minutes < 3 * 60);
+  if (lateNight) return wait + 3;
+  // 1:00-5:00 on other nights: few drivers about.
+  if (minutes >= 60 && minutes < 5 * 60) return wait + 4;
+  if (!weekend && WEEKDAY_PEAKS.some(([from, to]) => minutes >= from && minutes < to)) return wait + 2;
+  return wait;
+}
+
+/** How each Ridewise service is named on a tile. */
+export const SERVICE_LABEL: Record<string, string> = {
+  uberx: 'UberX', uber_comfort: 'Comfort', uber_xl: 'UberXL', uber_black: 'Black',
+  lyft: 'Lyft', lyft_xl: 'Lyft XL', lyft_lux: 'Lux',
+};

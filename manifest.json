@@ -1,7 +1,7 @@
 {
   "id": "travel-times",
   "name": "Travel Times",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "Door-to-door times by CTA/transit, Uber, Lyft and car, with estimated ride prices, for saved routes and upcoming calendar events. Color-coded by family member.",
   "author": "Ryan",
   "license": "MIT",
@@ -30,22 +30,28 @@
       }
     ],
     "showTransit": true,
+    "transitRoutes": 2,
     "showDrive": true,
     "driveOnWork": false,
-    "showRideshare": true,
-    "rideshareWait": 5,
     "rateRegion": "",
     "rushSurge": true,
     "rushMultiplier": 1.25,
     "transitOptions": 2,
-    "uberProduct": "UberX",
-    "lyftRideType": "lyft",
+    "uberEstimates": true,
+    "uberTypes": [
+      "uberx"
+    ],
+    "lyftEstimates": true,
+    "lyftTypes": [
+      "lyft"
+    ],
     "showCalendar": true,
     "calendarHours": 12,
     "maxEvents": 3,
     "bufferMinutes": 5,
     "eventFilter": "",
     "showTitle": true,
+    "cardColumns": "auto",
     "scaleWithSize": true,
     "timeFormat": "auto",
     "refreshMinutes": 11,
@@ -170,11 +176,12 @@
         "ui:widget": "toggle",
         "ui:group": "Travel modes"
       },
-      "transitOptions": {
+      "transitRoutes": {
         "type": "number",
-        "title": "Transit departures to list",
+        "title": "Transit routes to show",
+        "description": "Different ways by transit, each its own tile: e.g. the Blue Line and the 9 bus to the Green Line. Fewer may show when Google finds fewer.",
         "minimum": 1,
-        "maximum": 3,
+        "maximum": 4,
         "ui:widget": "slider",
         "ui:step": 1,
         "ui:group": "Travel modes",
@@ -183,49 +190,98 @@
           "equals": true
         }
       },
-      "showRideshare": {
-        "type": "boolean",
-        "title": "Uber and Lyft estimates",
-        "description": "Estimated door-to-door time (a wait for the car plus the drive) and price, from Ridewise's published rate cards. No Uber or Lyft account needed.",
-        "ui:widget": "toggle",
-        "ui:group": "Travel modes"
-      },
-      "rideshareWait": {
+      "transitOptions": {
         "type": "number",
-        "title": "Wait for a car (minutes)",
-        "description": "Added to the drive time for the Uber and Lyft estimates. 5 is typical in a city.",
-        "minimum": 0,
-        "maximum": 30,
+        "title": "Departures per transit route",
+        "minimum": 1,
+        "maximum": 4,
         "ui:widget": "slider",
         "ui:step": 1,
         "ui:group": "Travel modes",
         "ui:showWhen": {
-          "field": "showRideshare",
+          "field": "showTransit",
+          "equals": true
+        },
+        "description": "The first, plus \"Next - 12:56pm, 1:02pm\". A departure is dropped 90 seconds after its leave time and the next shown."
+      },
+      "uberEstimates": {
+        "type": "boolean",
+        "title": "Uber estimates",
+        "description": "Estimated door-to-door time (a wait for the car plus the drive) and price, from Ridewise's rate cards.",
+        "ui:widget": "toggle",
+        "ui:group": "Travel modes"
+      },
+      "uberTypes": {
+        "type": "array",
+        "title": "Uber ride types",
+        "description": "Each one picked gets its own price on the Uber tile.",
+        "items": {
+          "type": "string"
+        },
+        "enum": [
+          "uberx",
+          "uber_comfort",
+          "uber_xl",
+          "uber_black"
+        ],
+        "enumLabels": [
+          "UberX",
+          "Comfort",
+          "UberXL",
+          "Black"
+        ],
+        "ui:widget": "multiselect",
+        "ui:group": "Travel modes",
+        "ui:showWhen": {
+          "field": "uberEstimates",
+          "equals": true
+        }
+      },
+      "lyftEstimates": {
+        "type": "boolean",
+        "title": "Lyft estimates",
+        "description": "As for Uber, with Lyft's rate cards.",
+        "ui:widget": "toggle",
+        "ui:group": "Travel modes"
+      },
+      "lyftTypes": {
+        "type": "array",
+        "title": "Lyft ride types",
+        "description": "Each one picked gets its own price on the Lyft tile.",
+        "items": {
+          "type": "string"
+        },
+        "enum": [
+          "lyft",
+          "lyft_xl",
+          "lyft_lux"
+        ],
+        "enumLabels": [
+          "Lyft",
+          "Lyft XL",
+          "Lux"
+        ],
+        "ui:widget": "multiselect",
+        "ui:group": "Travel modes",
+        "ui:showWhen": {
+          "field": "lyftEstimates",
           "equals": true
         }
       },
       "rateRegion": {
         "type": "string",
         "title": "Price region",
-        "description": "A Ridewise region name such as \"Chicago Metro\" or \"NYC Metro\". Blank picks the nearest to home, or US Default.",
+        "description": "A Ridewise region name such as \"Chicago Metro\". Blank picks the nearest to home, or US Default. Also sets the expected wait for a car.",
         "ui:widget": "text",
         "ui:placeholder": "Nearest to home",
-        "ui:group": "Travel modes",
-        "ui:showWhen": {
-          "field": "showRideshare",
-          "equals": true
-        }
+        "ui:group": "Travel modes"
       },
       "rushSurge": {
         "type": "boolean",
         "title": "Rush-hour pricing",
         "description": "Raise estimated prices on weekdays 7:00-9:30 and 16:00-19:00 (half as much for the half hour either side) and Friday/Saturday 22:00-03:00. A rough guess, not live surge.",
         "ui:widget": "toggle",
-        "ui:group": "Travel modes",
-        "ui:showWhen": {
-          "field": "showRideshare",
-          "equals": true
-        }
+        "ui:group": "Travel modes"
       },
       "rushMultiplier": {
         "type": "number",
@@ -237,48 +293,6 @@
         "ui:group": "Travel modes",
         "ui:showWhen": {
           "field": "rushSurge",
-          "equals": true
-        }
-      },
-      "uberProduct": {
-        "type": "string",
-        "title": "Uber ride type",
-        "enum": [
-          "UberX",
-          "Comfort",
-          "UberXL",
-          "Black"
-        ],
-        "enumLabels": [
-          "UberX",
-          "Comfort",
-          "UberXL",
-          "Black"
-        ],
-        "ui:widget": "select",
-        "ui:group": "Travel modes",
-        "ui:showWhen": {
-          "field": "showRideshare",
-          "equals": true
-        }
-      },
-      "lyftRideType": {
-        "type": "string",
-        "title": "Lyft ride type",
-        "enum": [
-          "lyft",
-          "lyft_plus",
-          "lyft_lux"
-        ],
-        "enumLabels": [
-          "Lyft",
-          "Lyft XL",
-          "Lux"
-        ],
-        "ui:widget": "select",
-        "ui:group": "Travel modes",
-        "ui:showWhen": {
-          "field": "showRideshare",
           "equals": true
         }
       },
@@ -362,6 +376,27 @@
         "type": "boolean",
         "title": "Show title",
         "ui:widget": "toggle",
+        "ui:group": "Display"
+      },
+      "cardColumns": {
+        "type": "string",
+        "title": "Trip cards side by side",
+        "description": "Auto lays cards out to suit the module: side by side in a wide strip, stacked in a tall column.",
+        "enum": [
+          "auto",
+          "1",
+          "2",
+          "3",
+          "4"
+        ],
+        "enumLabels": [
+          "Auto (by module shape)",
+          "1",
+          "2",
+          "3",
+          "4"
+        ],
+        "ui:widget": "select",
         "ui:group": "Display"
       },
       "scaleWithSize": {

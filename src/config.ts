@@ -26,11 +26,12 @@ export interface Config {
   showDrive: boolean;
   /** Show the Drive tile on routes marked as work/office routes. */
   driveOnWork: boolean;
-  /** An estimated ride-hail tile from the drive time, for when Uber and
-   *  Lyft won't give quotes. */
-  showRideshare: boolean;
-  /** Minutes the Uber and Lyft estimates allow for a car to arrive. */
-  rideshareWait: number;
+  /** Estimated Uber and Lyft tiles, each on its own. */
+  uberEstimates: boolean;
+  lyftEstimates: boolean;
+  /** Ride types priced on each tile, Ridewise service ids ("uberx", "uber_black"). */
+  uberTypes: string[];
+  lyftTypes: string[];
   /** Ridewise region to price in; '' picks the nearest to home. */
   rateRegion: string;
   /** Raise estimated prices at rush hour and on weekend late nights. */
@@ -38,9 +39,12 @@ export interface Config {
   rushMultiplier: number;
   /** Grow everything with the module's area, as the CTA module does. */
   scaleWithSize: boolean;
+  /** Distinct transit routes shown per trip (Blue Line, 9 bus...). */
+  transitRoutes: number;
+  /** Departures listed for each transit route. */
   transitOptions: number;
-  uberProduct: string;
-  lyftRideType: string;
+  /** Trip cards side by side; 0 picks from the module's shape. */
+  cardColumns: number;
   showCalendar: boolean;
   homeAddress: string;
   calendarHours: number;
@@ -96,21 +100,43 @@ function readRoute(raw: unknown): SavedRoute {
   };
 }
 
+export const UBER_TYPES = ['uberx', 'uber_comfort', 'uber_xl', 'uber_black'];
+export const LYFT_TYPES = ['lyft', 'lyft_xl', 'lyft_lux'];
+
+/** The ride types picked, in the tile's order, or the fallback when none are. */
+function rideTypes(v: unknown, known: string[], fallback: string): string[] {
+  const picked = Array.isArray(v) ? known.filter((t) => v.includes(t)) : [];
+  return picked.length ? picked : [fallback];
+}
+
+/** Ride types as the single-choice settings before 1.5 stored them. */
+function legacyUber(v: unknown): string {
+  const t = String(v ?? '').toLowerCase();
+  return t.includes('comfort') ? 'uber_comfort' : t.includes('black') ? 'uber_black' : t.includes('xl') ? 'uber_xl' : 'uberx';
+}
+function legacyLyft(v: unknown): string {
+  const t = String(v ?? '').toLowerCase();
+  return t.includes('lux') ? 'lyft_lux' : t.includes('xl') || t.includes('plus') ? 'lyft_xl' : 'lyft';
+}
+
 export function readConfig(raw: Record<string, unknown>): Config {
   return {
     routes: Array.isArray(raw.routes) ? raw.routes.map(readRoute) : [],
     showTransit: on(raw.showTransit),
     showDrive: on(raw.showDrive),
     driveOnWork: raw.driveOnWork === true || raw.driveOnWork === 'true',
-    showRideshare: on(raw.showRideshare),
-    rideshareWait: Math.round(num(raw.rideshareWait, 5, 0, 30)),
+    // One toggle each now; a module saved with the older shared toggle keeps its choice.
+    uberEstimates: raw.uberEstimates === undefined ? on(raw.showRideshare) : on(raw.uberEstimates),
+    lyftEstimates: raw.lyftEstimates === undefined ? on(raw.showRideshare) : on(raw.lyftEstimates),
+    uberTypes: rideTypes(raw.uberTypes, UBER_TYPES, legacyUber(raw.uberProduct)),
+    lyftTypes: rideTypes(raw.lyftTypes, LYFT_TYPES, legacyLyft(raw.lyftRideType)),
     rateRegion: /^auto$/i.test(str(raw.rateRegion)) ? '' : str(raw.rateRegion),
     rushSurge: on(raw.rushSurge),
     rushMultiplier: num(raw.rushMultiplier, 1.25, 1, 2),
     scaleWithSize: on(raw.scaleWithSize),
-    transitOptions: Math.round(num(raw.transitOptions, 2, 1, 3)),
-    uberProduct: str(raw.uberProduct, 'UberX') || 'UberX',
-    lyftRideType: str(raw.lyftRideType, 'lyft') || 'lyft',
+    transitRoutes: Math.round(num(raw.transitRoutes, 2, 1, 4)),
+    transitOptions: Math.round(num(raw.transitOptions, 2, 1, 4)),
+    cardColumns: /^auto$/i.test(String(raw.cardColumns ?? 'auto')) ? 0 : Math.round(num(raw.cardColumns, 0, 0, 4)),
     showCalendar: on(raw.showCalendar),
     homeAddress: str(raw.homeAddress),
     calendarHours: num(raw.calendarHours, 12, 1, 48),

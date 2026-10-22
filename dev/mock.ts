@@ -33,6 +33,7 @@ export const mockFetcher: Fetcher = async (req) => {
     // Ridewise's CSV format, with its Chicago and default rows for these services.
     return { status: 200, body: `region,provider,service_type,base_fare_usd,per_mile_usd,per_minute_usd,booking_fee_usd,minimum_fare_usd
 Chicago Metro,uber,uberx,1.7,1.35,0.28,2.3,6.75
+Chicago Metro,uber,uber_black,7.5,3.65,0.65,0.0,15.0
 Chicago Metro,lyft,lyft,1.6,1.3,0.26,2.35,6.5
 US Default,uber,uberx,1.5,1.2,0.22,2.2,6.0
 US Default,lyft,lyft,1.4,1.15,0.2,2.25,5.75` };

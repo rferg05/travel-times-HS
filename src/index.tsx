@@ -10,18 +10,18 @@ import type { Config } from './config';
 import { hostFetcher, loadTrip } from './providers';
 import { geocode, milesBetween } from './geo';
 import { alertLevel, browserStore, cappedFetcher, currentUsage, remaining } from './usage';
-import type { Fetcher, LatLon, Mode, Reason, TransitLine, TransitOption, TripTimes } from './providers';
-import { estimateFare, findCard, formatFare, loadRates, pickRegion, rushMultiplier, serviceFor } from './fares';
+import type { DriveTime, Fetcher, LatLon, Mode, Reason, TransitLine, TripTimes } from './providers';
+import {
+  estimateFare, findCard, formatFare, loadRates, pickRegion, pickupWait, rushMultiplier, SERVICE_LABEL,
+} from './fares';
 import type { RateCard } from './fares';
 import { isQuiet } from './schedule';
 import { householdPeople } from './schedule';
 import type { CalendarEvent, FamilyMember, Person } from './schedule';
 import { NEUTRAL_PALETTE, paletteFor } from './colors';
 import type { Palette } from './colors';
-import {
-  bestTransit, buildTrips, fastest, FIRST_LOOK_MS, googleCost, isDue, leaveTimes, NEARBY_MILES, rideFor,
-} from './trips';
-import type { ModeName, Trip } from './trips';
+import { buildTrips, fastestOf, FIRST_LOOK_MS, googleCost, isDue, NEARBY_MILES, transitRoutes } from './trips';
+import type { ModeName, TransitRoute, Trip } from './trips';
 
 /** Countdowns and which routes are showing are re-read this often. */
 const CLOCK_TICK_MS = 30_000;
@@ -225,8 +225,8 @@ function clockFormatter(config: Config, hostFormat: '12h' | '24h' | undefined, t
   } catch {
     f = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
   }
-  // "8:04 AM" reads fine as "8:04a" on a tile and saves room.
-  return (ms: number) => f.format(new Date(ms)).replace(/\s?([AaPp])\.?\s?[Mm]\.?$/, (_m, ap: string) => ap.toLowerCase());
+  // "8:04 AM" as "8:04am": no space, lower case.
+  return (ms: number) => f.format(new Date(ms)).replace(/\s?([AaPp])\.?\s?[Mm]\.?$/, (_m, ap: string) => `${ap.toLowerCase()}m`);
 }
 
 function minutesText(n: number): string {
@@ -390,7 +390,7 @@ interface TileProps {
 
 function Tile({ mode, agency, big, estimated, sub, highlight, badge = true, palette }: TileProps) {
   const style: CSSProperties = {
-    flex: '1 1 0', minWidth: '6.6em', display: 'flex', flexDirection: 'column', gap: '0.15em',
+    minWidth: 0, display: 'flex', flexDirection: 'column', gap: '0.15em',
     padding: '0.4em 0.55em', borderRadius: '0.55em', position: 'relative',
     background: highlight ? palette.highlightSurface : palette.tile,
     border: `0.12em solid ${highlight ? palette.highlight : 'rgba(255,255,255,0.08)'}`,
@@ -451,45 +451,38 @@ interface Pricing {
   timezone?: string;
 }
 
-interface TileCommon {
+interface TileBase {
   trip: Trip;
-  times: TripTimes | undefined;
-  config: Config;
   now: number;
   clock: (ms: number) => string;
-  pricing: Pricing;
   palette: Palette;
   highlight?: boolean;
+  badge?: boolean;
 }
 
-function TransitTile({ trip, times, config, now, clock, highlight, leave, palette }: TileCommon & { leave?: number }) {
-  const m = times?.transit;
-  if (!m || !m.ok) return <Tile mode="transit" big={null} sub={failText(m)} palette={palette} />;
-  const best = bestTransit(m.value, trip.arriveBy) as TransitOption;
-  // "Then" lists the departures after the one shown, in order.
-  const others = m.value
-    .filter((o) => o !== best && o.leaveAt !== null && o.leaveAt > Math.max(now, best.leaveAt ?? now))
-    .sort((a, b) => a.leaveAt! - b.leaveAt!)
-    .slice(0, config.transitOptions - 1);
-  const note = trip.kind === 'event'
-    ? leaveNote(leave, now, clock)
-    : best.leaveAt !== null ? leaveNote(best.leaveAt, now, clock) : null;
-  const lines = best.lines.slice(0, 3);
+/** One transit route: its lines, when to leave, and the departures after. */
+function TransitTile({ route, now, clock, palette, highlight, badge }: TileBase & { route: TransitRoute }) {
+  const main = route.main;
+  const note = main.leaveAt !== null ? leaveNote(main.leaveAt, now, clock) : null;
+  const lines = route.lines.slice(0, 3);
   return (
     <Tile
       mode="transit"
-      agency={best.lines.find((l) => l.agency)?.agency}
-      big={minutesText(best.minutes)}
+      agency={route.lines.find((l) => l.agency)?.agency}
+      big={minutesText(main.minutes)}
       highlight={highlight}
+      badge={badge}
       palette={palette}
       sub={(
         <>
           {lines.map((l, i) => <LineChip key={i} line={l} />)}
           {!lines.length && <span>walk</span>}
           {note && <span style={{ color: note.tone, fontWeight: 650 }}>{note.text}</span>}
-          {others.length > 0 && (
-            // Later departures, as leave-home times like the one above.
-            <span style={{ opacity: 0.75, flexBasis: '100%' }}>or {others.map((o) => clock(o.leaveAt!)).join(', ')}</span>
+          {route.next.length > 0 && (
+            // Later departures on the same lines, as leave-home times.
+            <span style={{ opacity: 0.8, flexBasis: '100%' }}>
+              Next - {route.next.map((o) => clock(o.leaveAt!)).join(', ')}
+            </span>
           )}
         </>
       )}
@@ -497,58 +490,82 @@ function TransitTile({ trip, times, config, now, clock, highlight, leave, palett
   );
 }
 
-/** Uber or Lyft: an estimated time (wait plus drive) and price. */
-function RideTile({ mode, trip, times, config, now, clock, pricing, highlight, badge, leave, palette }: TileCommon & {
+interface RideQuote {
+  service: string;
+  minutes: number;
+  wait: number;
+  price: string | null;
+  surge: number;
+}
+
+/** Estimated time and price for each ride type picked, for one service. */
+function rideQuotes(
+  mode: 'uber' | 'lyft', services: string[], drive: DriveTime, pricing: Pricing, config: Config,
+  when: (minutes: number) => number,
+): RideQuote[] {
+  return services.map((service) => {
+    // Wait and surge are read at the time the car would be called: now for a
+    // route, the leave time for an event (which depends on the wait itself,
+    // so it's taken from a typical wait first).
+    const at = when(drive.minutes + 6);
+    const wait = pickupWait(service, pricing.region, new Date(at), pricing.timezone);
+    const surge = rushMultiplier(new Date(at), pricing.timezone, config);
+    const card = pricing.cards ? findCard(pricing.cards, pricing.region, mode, service) : null;
+    const fare = card && drive.miles ? estimateFare(card, drive.miles, drive.minutes, surge) : null;
+    return { service, minutes: drive.minutes + wait, wait, price: fare ? formatFare(fare) : null, surge };
+  });
+}
+
+/** Uber or Lyft: the first ride type's time up top, a price for each type picked. */
+function RideTile({ mode, quotes, leave, now, clock, palette, highlight, badge }: TileBase & {
   mode: 'uber' | 'lyft';
+  quotes: RideQuote[];
   leave?: number;
-  badge?: boolean;
 }) {
-  const minutes = rideFor(trip.request, times);
-  if (minutes === null) return <Tile mode={mode} big={null} sub={failText(times?.drive)} palette={palette} />;
-  const note = trip.kind === 'event' ? leaveNote(leave, now, clock) : null;
-  // Priced for when the car would be called: now, or the leave time for an event.
-  const drive = times?.drive?.ok ? times.drive.value : null;
-  const at = trip.kind === 'event' && leave !== undefined ? Math.max(now, leave) : now;
-  const surge = rushMultiplier(new Date(at), pricing.timezone, config);
-  const service = serviceFor(mode, mode === 'uber' ? config.uberProduct : config.lyftRideType);
-  const card = pricing.cards ? findCard(pricing.cards, pricing.region, mode, service) : null;
-  const fare = card && drive?.miles ? estimateFare(card, drive.miles, drive.minutes, surge) : null;
+  const first = quotes[0];
+  const note = leave !== undefined ? leaveNote(leave, now, clock) : null;
+  const surge = Math.max(...quotes.map((q) => q.surge));
   return (
     <Tile
       mode={mode}
-      big={minutesText(minutes)}
+      big={minutesText(first.minutes)}
       estimated
       highlight={highlight}
       badge={badge}
       palette={palette}
       sub={(
         <>
-          <span style={{ fontWeight: 650 }}>{fare ? formatFare(fare) : 'price n/a'}</span>
+          {quotes.map((q) => (
+            <span key={q.service} style={{ flexBasis: '100%', display: 'flex', flexWrap: 'wrap', columnGap: '0.4em', alignItems: 'baseline' }}>
+              <span style={{ opacity: 0.8, whiteSpace: 'nowrap' }}>{SERVICE_LABEL[q.service] ?? q.service}</span>
+              <span style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>{q.price ?? 'price n/a'}</span>
+              {q.minutes !== first.minutes && <span style={{ opacity: 0.7, whiteSpace: 'nowrap' }}>~{minutesText(q.minutes)} min</span>}
+            </span>
+          ))}
+          <span style={{ opacity: 0.7 }}>car ~{first.wait} min</span>
           {surge > 1 && <span style={{ color: AMBER, fontWeight: 650 }}>rush ×{Number(surge.toFixed(2))}</span>}
-          {note && <span style={{ color: note.tone }}>{note.text}</span>}
+          {note && <span style={{ color: note.tone, fontWeight: 650 }}>{note.text}</span>}
         </>
       )}
     />
   );
 }
 
-function DriveTile({ trip, times, now, clock, highlight, leave, palette }: TileCommon & { leave?: number }) {
-  const m = times?.drive;
-  if (!m || !m.ok) return <Tile mode="drive" big={null} sub={failText(m)} palette={palette} />;
-  const d = m.value;
-  const note = trip.kind === 'event' ? leaveNote(leave, now, clock) : null;
+function DriveTile({ drive, leave, now, clock, palette, highlight, badge }: TileBase & { drive: DriveTime; leave?: number }) {
+  const note = leave !== undefined ? leaveNote(leave, now, clock) : null;
   return (
     <Tile
       mode="drive"
-      big={minutesText(d.minutes)}
+      big={minutesText(drive.minutes)}
       highlight={highlight}
+      badge={badge}
       palette={palette}
       sub={(
         <>
-          <span style={{ color: d.delayMinutes >= 10 ? RED : d.delayMinutes >= 4 ? AMBER : GREEN }}>
-            {d.delayMinutes > 0 ? `+${d.delayMinutes} traffic` : 'clear'}
+          <span style={{ color: drive.delayMinutes >= 10 ? RED : drive.delayMinutes >= 4 ? AMBER : GREEN }}>
+            {drive.delayMinutes > 0 ? `+${drive.delayMinutes} traffic` : 'clear'}
           </span>
-          {note && <span style={{ color: note.tone }}>{note.text}</span>}
+          {note && <span style={{ color: note.tone, fontWeight: 650 }}>{note.text}</span>}
         </>
       )}
     />
@@ -562,24 +579,62 @@ function barFor(palettes: Palette[]): string {
   return `linear-gradient(to bottom, ${palettes.map((p, i) => `${p.base} ${(i / n) * 100}% ${((i + 1) / n) * 100}%`).join(', ')})`;
 }
 
-function TripCard({ trip, times, config, now, clock, pricing, waitUntil, capped }: Omit<TileCommon, 'highlight' | 'palette'> & {
+interface CardProps {
+  trip: Trip;
+  times: TripTimes | undefined;
+  config: Config;
+  now: number;
+  clock: (ms: number) => string;
+  pricing: Pricing;
   waitUntil?: number;
   capped?: boolean;
-}) {
-  const best = trip.kind === 'route' ? fastest(times, now, trip.request) : null;
-  const leave = trip.kind === 'event' ? leaveTimes(trip, times) : {};
+  /** Tiles per row, from the module's layout plan. */
+  tilesPerRow: number;
+}
+
+function TripCard({ trip, times, config, now, clock, pricing, waitUntil, capped, tilesPerRow }: CardProps) {
   // The first rider's color drives the card; more riders add stripes and discs.
   const palettes = trip.people.map((p) => paletteFor(p.color));
   const palette = palettes[0] ?? NEUTRAL_PALETTE;
-  const common = { trip, times, config, now, clock, pricing, palette };
   const tags = trip.people.length
     ? trip.people.map((p, i) => ({ name: p.name, palette: palettes[i] }))
     : trip.personName ? [{ name: trip.personName, palette: NEUTRAL_PALETTE }] : [];
   const r = trip.request;
-  const rideBest = best === 'uber';
+  const isEvent = trip.kind === 'event' && trip.arriveBy !== null;
+
+  // What each tile shows, worked out once so "fastest" can compare them.
+  const transit = r.transit && times?.transit?.ok
+    ? transitRoutes(times.transit.value, now, trip.arriveBy, config.transitRoutes, config.transitOptions)
+    : [];
+  const drive = times?.drive?.ok ? times.drive.value : null;
+  // When the car would be called, for a trip of `minutes`.
+  const callAt = (minutes: number) => (isEvent ? Math.max(now, trip.arriveBy! - minutes * 60_000) : now);
+  const uber = r.rideshare && config.uberEstimates && drive ? rideQuotes('uber', config.uberTypes, drive, pricing, config, callAt) : null;
+  const lyft = r.rideshare && config.lyftEstimates && drive ? rideQuotes('lyft', config.lyftTypes, drive, pricing, config, callAt) : null;
+
+  const leave: Record<string, number | undefined> = {};
+  const arrive: Record<string, number | undefined> = {};
+  for (const t of transit) {
+    leave[`transit:${t.key}`] = t.main.leaveAt ?? undefined;
+    arrive[`transit:${t.key}`] = t.main.arriveAt ?? undefined;
+  }
+  if (uber) { leave.uber = isEvent ? trip.arriveBy! - uber[0].minutes * 60_000 : undefined; arrive.uber = now + uber[0].minutes * 60_000; }
+  if (lyft) { leave.lyft = isEvent ? trip.arriveBy! - lyft[0].minutes * 60_000 : undefined; arrive.lyft = now + lyft[0].minutes * 60_000; }
+  if (drive && r.drive) { leave.drive = isEvent ? trip.arriveBy! - drive.minutes * 60_000 : undefined; arrive.drive = now + drive.minutes * 60_000; }
+  // Fastest is for leaving now, so only routes get it; one badge per tie.
+  const best = trip.kind === 'route' ? fastestOf(arrive) : new Set<string>();
+  let badged = false;
+  const mark = (id: string) => {
+    const highlight = best.has(id);
+    const badge = highlight && !badged;
+    if (badge) badged = true;
+    return { highlight, badge };
+  };
+  const base = { trip, now, clock, palette };
+
   return (
     <div style={{
-      display: 'flex', borderRadius: '0.75em', overflow: 'hidden', flexShrink: 0,
+      display: 'flex', borderRadius: '0.75em', overflow: 'hidden', minWidth: 0,
       background: palette.surface, border: `0.14em solid ${palette.rim}`,
     }}>
       <div style={{ width: '0.6em', flexShrink: 0, background: barFor(palettes) }} />
@@ -607,11 +662,24 @@ function TripCard({ trip, times, config, now, clock, pricing, waitUntil, capped 
             {capped ? 'Paused for the rest of the month' : `Travel times from ${clock(waitUntil!)}`}
           </div>
         ) : (
-          <div style={{ display: 'flex', gap: '0.45em', flexWrap: 'wrap', paddingTop: '0.3em' }}>
-            {r.transit && <TransitTile {...common} highlight={best === 'transit'} leave={leave.transit} />}
-            {r.rideshare && <RideTile {...common} mode="uber" highlight={rideBest} leave={leave.uber} />}
-            {r.rideshare && <RideTile {...common} mode="lyft" highlight={rideBest} badge={false} leave={leave.lyft} />}
-            {r.drive && <DriveTile {...common} highlight={best === 'drive'} leave={leave.drive} />}
+          <div style={{
+            display: 'grid', gridTemplateColumns: `repeat(${tilesPerRow}, minmax(0, 1fr))`, gap: '0.45em', paddingTop: '0.3em',
+          }}>
+            {r.transit && (transit.length
+              ? transit.map((t) => <TransitTile key={t.key} {...base} route={t} {...mark(`transit:${t.key}`)} />)
+              : (
+                <Tile mode="transit" big={null} palette={palette}
+                  sub={times?.transit?.ok ? 'checking for the next departures' : failText(times?.transit)} />
+              ))}
+            {r.rideshare && config.uberEstimates && (uber
+              ? <RideTile {...base} mode="uber" quotes={uber} leave={leave.uber} {...mark('uber')} />
+              : <Tile mode="uber" big={null} palette={palette} sub={failText(times?.drive)} />)}
+            {r.rideshare && config.lyftEstimates && (lyft
+              ? <RideTile {...base} mode="lyft" quotes={lyft} leave={leave.lyft} {...mark('lyft')} />
+              : <Tile mode="lyft" big={null} palette={palette} sub={failText(times?.drive)} />)}
+            {r.drive && (drive
+              ? <DriveTile {...base} drive={drive} leave={leave.drive} {...mark('drive')} />
+              : <Tile mode="drive" big={null} palette={palette} sub={failText(times?.drive)} />)}
           </div>
         )}
       </div>
@@ -619,9 +687,68 @@ function TripCard({ trip, times, config, now, clock, pricing, waitUntil, capped 
   );
 }
 
+// ── Layout ──────────────────────────────────────────────────────────────────
+//
+// The module plans its grid from its own size: how many trip cards side by
+// side, and how many tiles per row inside a card. For each choice it works
+// out how large the text could be (in em, the sizes below are what a card
+// and a tile take up per em of text), and keeps the one that allows the
+// largest. Fixing the grid first, rather than letting tiles wrap as they
+// please, keeps the auto-fit steady: the layout no longer changes shape as
+// the text grows or shrinks.
+
+/** Width of one tile plus its gap, in em. */
+const TILE_W = 7.2;
+/** Height of one row of tiles plus its gap, in em. */
+const TILE_ROW_H = 5.6;
+/** A card's own width (color bar, padding) and height (header, padding), in em. */
+const CARD_W = 2.6;
+const CARD_H = 4.2;
+/** Space between cards, in em. */
+const GAP = 0.5;
+/** The title, footer, padding and section labels, in em. */
+const CHROME_H = 3.6;
+const LABEL_H = 1.4;
+
+export interface Layout {
+  /** Trip cards per row. */
+  columns: number;
+  /** Tiles per row inside a card. */
+  tilesPerRow: number;
+}
+
+/**
+ * The grid that lets the text be largest in a `width` x `height` px module
+ * holding `cards` trip cards of up to `tiles` tiles each. `columns` fixes
+ * the number of cards across (0 picks it too).
+ */
+export function planLayout(
+  width: number, height: number, cards: number, tiles: number, opts: { columns?: number; sections?: number } = {},
+): Layout {
+  const n = Math.max(1, cards);
+  const t = Math.max(1, tiles);
+  if (width <= 0 || height <= 0) return { columns: Math.min(opts.columns || 1, n), tilesPerRow: t };
+  const chrome = CHROME_H + Math.max(0, (opts.sections ?? 1) - 1) * LABEL_H;
+  let best: Layout = { columns: 1, tilesPerRow: t };
+  let bestEm = 0;
+  const columnChoices = opts.columns ? [Math.min(opts.columns, n)] : Array.from({ length: Math.min(n, 4) }, (_, i) => i + 1);
+  for (const c of columnChoices) {
+    const cardRows = Math.ceil(n / c);
+    for (let k = t; k >= 1; k--) {
+      const tileRows = Math.ceil(t / k);
+      const emWide = c * (k * TILE_W + CARD_W) + (c - 1) * GAP;
+      const emTall = chrome + cardRows * (CARD_H + tileRows * TILE_ROW_H) + (cardRows - 1) * GAP;
+      const em = Math.min(width / emWide, height / emTall);
+      // Ties go to fewer cards across and more tiles per row.
+      if (em > bestEm * 1.02) { bestEm = em; best = { columns: c, tilesPerRow: k }; }
+    }
+  }
+  return best;
+}
+
 function SectionLabel({ children }: { children: ReactNode }) {
   return (
-    <div style={{ fontSize: '0.75em', fontWeight: 750, letterSpacing: '0.08em', textTransform: 'uppercase', opacity: 0.6 }}>
+    <div style={{ fontSize: '0.75em', fontWeight: 750, letterSpacing: '0.08em', textTransform: 'uppercase', opacity: 0.6, flexShrink: 0 }}>
       {children}
     </div>
   );
@@ -729,7 +856,7 @@ export default function TravelTimes(props: TravelTimesProps) {
   const home = useHome(fetcher, config.homeAddress, props.latitude, props.longitude);
   const miles = useEventDistances(trips, fetcher, home);
   const { times, usage } = useTripTimes(trips, config, timezone, googleFetcher, miles);
-  const cards = useRates(fetcher, config.showRideshare);
+  const cards = useRates(fetcher, config.uberEstimates || config.lyftEstimates);
   const pricing: Pricing = useMemo(() => ({
     cards, region: cards ? pickRegion(cards, home, config.rateRegion) : '', timezone,
   }), [cards, home, config.rateRegion, timezone]);
@@ -760,15 +887,28 @@ export default function TravelTimes(props: TravelTimesProps) {
   const sizeScale = config.scaleWithSize && box.w > 0 && box.h > 0
     ? Math.min(3, Math.max(0.75, Math.sqrt((box.w * box.h) / REFERENCE_AREA)))
     : 1;
-  const resetKey = `${trips.map((t) => t.key).join('|')}|${Object.keys(times).length}|${box.w}x${box.h}|${capped}|${nearCap}`;
+  const resetKey = `${trips.map((t) => t.key).join('|')}|${Object.keys(times).length}|${box.w}x${box.h}|${capped}|${nearCap}`
+    + `|${config.cardColumns}|${config.transitRoutes}|${config.transitOptions}|${config.uberEstimates}|${config.lyftEstimates}`
+    + `|${config.uberTypes.join()}|${config.lyftTypes.join()}`;
   const { boxRef, fontSize } = useFitFontSize(textSize * sizeScale * MAX_GROW, resetKey);
-  const showsEstimates = config.showRideshare && trips.length > 0;
+  const showsEstimates = (config.uberEstimates || config.lyftEstimates) && trips.length > 0;
+  // Cards across and tiles per row, planned from the module's size and shape.
+  const tilesPerCard = Math.max(1, ...trips.map((t) => (t.request.transit ? config.transitRoutes : 0)
+    + (t.request.rideshare && config.uberEstimates ? 1 : 0) + (t.request.rideshare && config.lyftEstimates ? 1 : 0)
+    + (t.request.drive ? 1 : 0)));
+  const layout = planLayout(box.w, box.h, trips.length, tilesPerCard, {
+    columns: config.cardColumns, sections: (routes.length > 0 ? 1 : 0) + (upcoming.length > 0 ? 1 : 0),
+  });
+  const grid: CSSProperties = {
+    display: 'grid', gridTemplateColumns: `repeat(${layout.columns}, minmax(0, 1fr))`,
+    gap: '0.5em', flexShrink: 0, alignItems: 'start',
+  };
 
   const needsSetup = !config.routes.some((r) => r.destination) && !(config.showCalendar && homeOrigin);
   const quiet = isQuiet(config, new Date(now), timezone);
   const card = (t: Trip) => (
     <TripCard key={t.key} trip={t} times={times[t.key]} config={config} now={now} clock={clock} pricing={pricing}
-      waitUntil={waitUntil(t)} capped={capped} />
+      waitUntil={waitUntil(t)} capped={capped} tilesPerRow={layout.tilesPerRow} />
   );
 
   return (
@@ -802,19 +942,11 @@ export default function TravelTimes(props: TravelTimesProps) {
           </div>
         )}
 
-        {routes.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5em', flexShrink: 0 }}>
-            {upcoming.length > 0 && <SectionLabel>Routes</SectionLabel>}
-            {routes.map(card)}
-          </div>
-        )}
+        {routes.length > 0 && upcoming.length > 0 && <SectionLabel>Routes</SectionLabel>}
+        {routes.length > 0 && <div style={grid}>{routes.map(card)}</div>}
 
-        {upcoming.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5em', flexShrink: 0 }}>
-            <SectionLabel>Upcoming</SectionLabel>
-            {upcoming.map(card)}
-          </div>
-        )}
+        {upcoming.length > 0 && <SectionLabel>Upcoming</SectionLabel>}
+        {upcoming.length > 0 && <div style={grid}>{upcoming.map(card)}</div>}
 
         {!needsSetup && trips.length === 0 && (
           <div style={{ opacity: 0.65, fontSize: '0.85em', flexShrink: 0 }}>No trips right now.</div>

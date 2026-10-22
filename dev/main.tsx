@@ -47,6 +47,7 @@ const config = {
   ...manifest.defaultConfig,
   homeAddress: '1500 N Milwaukee Ave, Chicago, IL',
   quietFrom: '', quietTo: '',
+  uberTypes: ['uberx', 'uber_black'],
   routes: [
     { label: 'Work', person: 'Ryan', origin: '', destination: '233 S Wacker Dr, Chicago, IL', days: [], activeFrom: '', activeTo: '', work: false },
     { label: 'Work', person: 'Audra', origin: '', destination: '525 W Monroe St, Chicago, IL', days: [], activeFrom: '', activeTo: '', work: true },

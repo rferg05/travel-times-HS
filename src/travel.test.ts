@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { readConfig } from './config';
 import { loadTrip, parseDrive, parseLatLon, parseTransit } from './providers';
-import type { Fetcher, ProxyRequest, TripRequest } from './providers';
+import type { Fetcher, ProxyRequest } from './providers';
 import { findPerson, householdPeople, inWindow, isActive, upcomingTrips } from './schedule';
 import type { Person } from './schedule';
-import { bestTransit, buildTrips, fastest, leaveTimes, rideshareMinutes } from './trips';
+import { buildTrips, EXPIRE_MS, fastestOf, rideMinutes, transitExhausted, transitRoutes } from './trips';
 
 const T0 = Date.parse('2026-10-21T13:00:00Z'); // Wed 08:00 in Chicago
 const TZ = 'America/Chicago';
@@ -177,8 +177,17 @@ describe('schedule', () => {
 
   it('defaults to estimated Uber and Lyft tiles', () => {
     const c = readConfig({});
-    expect([c.showRideshare, c.rideshareWait, c.driveOnWork]).toEqual([true, 5, false]);
+    expect([c.uberEstimates, c.lyftEstimates, c.uberTypes, c.lyftTypes, c.driveOnWork]).toEqual([true, true, ['uberx'], ['lyft'], false]);
+    expect([c.transitRoutes, c.transitOptions, c.cardColumns]).toEqual([2, 2, 0]);
     expect([c.rushSurge, c.rushMultiplier, c.rateRegion, c.scaleWithSize]).toEqual([true, 1.25, '', true]);
+  });
+
+  it('keeps choices saved by older versions', () => {
+    const c = readConfig({ showRideshare: false, uberProduct: 'Black', lyftRideType: 'lyft_plus' });
+    expect([c.uberEstimates, c.lyftEstimates]).toEqual([false, false]);
+    expect([c.uberTypes, c.lyftTypes]).toEqual([['uber_black'], ['lyft_xl']]);
+    const d = readConfig({ uberEstimates: true, lyftEstimates: false, uberTypes: ['uber_black', 'uberx', 'bogus'] });
+    expect([d.uberEstimates, d.lyftEstimates, d.uberTypes]).toEqual([true, false, ['uberx', 'uber_black']]);
   });
 
   it('looks up the drive for the rideshare tile even with Drive off', async () => {
@@ -188,10 +197,10 @@ describe('schedule', () => {
       return { status: 200, body: { routes: [{ duration: '900s', staticDuration: '900s', legs: [{}] }] } };
     };
     const times = await loadTrip(fetch, {
-      origin: 'a', destination: 'b', arriveBy: null, transit: false, drive: false, rideshare: true, rideshareWait: 4,
+      origin: 'a', destination: 'b', arriveBy: null, transit: false, drive: false, rideshare: true,
     }, T0);
     expect(log).toHaveLength(1);
-    expect(rideshareMinutes(times, 4)).toBe(19);
+    expect(rideMinutes(times, 4)).toBe(19);
   });
 });
 
@@ -212,7 +221,7 @@ describe('a whole trip', () => {
   it('looks up transit and drive, and picks the fastest shown', async () => {
     const log: ProxyRequest[] = [];
     const times = await loadTrip(mockFetcher(log), {
-      origin: 'a', destination: 'b', arriveBy: null, transit: true, drive: true, rideshare: true, rideshareWait: 5,
+      origin: 'a', destination: 'b', arriveBy: null, transit: true, drive: true, rideshare: true,
     }, T0);
     expect(log).toHaveLength(2);
     expect(times.transit?.ok).toBe(true);
@@ -220,32 +229,53 @@ describe('a whole trip', () => {
     if (times.drive?.ok) expect(times.drive.value.miles).toBeCloseTo(5, 1);
     expect(log.find((r) => r.url.includes('computeRoutes'))?.secretInjections?.header?.['X-Goog-Api-Key']).toBe('{{google_maps_key}}');
     // Leaving now: bus arrives 08:32, drive 08:22, a ride (5 + 22) 08:27.
-    const req = { transit: true, drive: true, rideshare: true, rideshareWait: 5 } as TripRequest;
-    expect(fastest(times, T0, req)).toBe('drive');
-    // With the Drive tile off, the ride tiles are fastest.
-    expect(fastest(times, T0, { ...req, drive: false })).toBe('uber');
+    const min = 60_000;
+    expect(fastestOf({ transit: T0 + 32 * min, drive: T0 + 22 * min, uber: T0 + 27 * min })).toEqual(new Set(['drive']));
+    // Uber and Lyft arriving together are both fastest.
+    expect(fastestOf({ transit: T0 + 32 * min, uber: T0 + 27 * min, lyft: T0 + 27 * min })).toEqual(new Set(['uber', 'lyft']));
+    expect(fastestOf({ uber: T0 })).toEqual(new Set());
   });
 });
 
-describe('leave times for events', () => {
-  it('leaves as late as still arrives in time', () => {
-    const options = parseTransit(transitBody, T0);
-    // Arrive by 08:32: only the bus makes it.
-    expect(bestTransit(options, T0 + 32 * 60_000)?.lines[0].name).toBe('56');
-    // Arrive by 08:40: both do; the train leaves later.
-    expect(bestTransit(options, T0 + 40 * 60_000)?.lines[0].name).toBe('Blue');
+describe('transit routes', () => {
+  const options = parseTransit(transitBody, T0);
+
+  it('lists each line as its own route, soonest arrival first', () => {
+    const routes = transitRoutes(options, T0, null, 3, 2);
+    expect(routes.map((r) => r.key)).toEqual(['56', 'Blue']);
+    expect(transitRoutes(options, T0, null, 1, 2).map((r) => r.key)).toEqual(['56']);
   });
 
-  it('counts back from the arrive-by time', () => {
-    const trip = { arriveBy: T0 + 60 * 60_000, request: { rideshare: true, rideshareWait: 7 } } as Parameters<typeof leaveTimes>[0];
-    const leave = leaveTimes(trip, {
-      fetchedAt: T0,
-      drive: { ok: true, value: { minutes: 20, delayMinutes: 0, start: null, end: null } },
-    });
-    expect(leave.drive).toBe(T0 + 40 * 60_000);
-    // 7 minutes for the car, then the 20-minute drive.
-    expect(leave.uber).toBe(T0 + 33 * 60_000);
-    expect(leave.lyft).toBe(T0 + 33 * 60_000);
+  it('groups departures on the same line, next ones after the shown one', () => {
+    const later = parseTransit({ routes: [transitBody.routes[0], transitBody.routes[0]].map((r, i) => ({
+      ...r, legs: [{ steps: r.legs[0].steps.map((st) => (st.transitDetails ? { ...st, transitDetails: { ...st.transitDetails,
+        stopDetails: { ...st.transitDetails.stopDetails,
+          departureTime: new Date(T0 + (9 + i * 8) * 60_000).toISOString(),
+          arrivalTime: new Date(T0 + (29 + i * 8) * 60_000).toISOString() } } } : st)) }],
+    })) }, T0);
+    const [blue] = transitRoutes(later, T0, null, 2, 3);
+    expect(blue.key).toBe('Blue');
+    expect(blue.main.leaveAt).toBe(T0 + 4 * 60_000);
+    expect(blue.next.map((o) => o.leaveAt)).toEqual([T0 + 12 * 60_000]);
+  });
+
+  it('drops a departure 90 seconds after its leave time', () => {
+    // The 56 says leave at 08:03.
+    const leave56 = T0 + 3 * 60_000;
+    expect(transitRoutes(options, leave56 + EXPIRE_MS - 1000, null, 3, 2).map((r) => r.key)).toEqual(['56', 'Blue']);
+    expect(transitRoutes(options, leave56 + EXPIRE_MS + 1000, null, 3, 2).map((r) => r.key)).toEqual(['Blue']);
+  });
+
+  it('asks again once every departure has gone', () => {
+    const times = { fetchedAt: T0, transit: { ok: true as const, value: options } };
+    expect(transitExhausted(times, T0)).toBe(false);
+    expect(transitExhausted(times, T0 + 10 * 60_000)).toBe(true);
+  });
+
+  it('picks, for an event, the latest departure that still arrives in time', () => {
+    // Arrive by 08:32: the 56 makes it, the Blue Line (08:33) doesn't, but is still listed.
+    const routes = transitRoutes(options, T0, T0 + 32 * 60_000, 3, 2);
+    expect(routes[0].key).toBe('56');
   });
 });
 
